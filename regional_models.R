@@ -1,9 +1,16 @@
-ROOT <- "e:/peter/bam/Apr2016"
+ROOT <- "C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation"
 library(mefa4)
-load(file.path(ROOT, "out", paste0("data_package_2016-12-01.Rdata")))
-load(file.path(ROOT, "out", "offsets-v3_2017-04-19.Rdata"))
 
+
+#load("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/BAM-BBS-tables_20170630.Rdata")
+#load("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/new_offset_data_package_2017-03-01.Rdata")
+load("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/pack_2016-12-01.Rdata")
+
+if (FALSE) {
 TAX <- nonDuplicated(TAX, Species_ID, TRUE)
+
+SPP=colnames(OFF)
+
 TAX <- droplevels(TAX[SPP,])
 OFF <- OFF[,SPP]
 
@@ -94,10 +101,11 @@ DAT$isMix <- ifelse(DAT$HAB_NALC2 %in% c("Mixed"), 1L, 0L)
 
 #keep <- !is.na(DAT$BOREALLOC) & DAT$BOREALLOC != "OUT"
 #keep[!is.null(DAT$BCR) & DAT$BCR %in% c("12", "13","14")] <- TRUE
+}
 
 DAT$isBBS <- startsWith(rownames(DAT), "BBS")
 table(DAT$isBBS, DAT$ROAD)
-DAT$JBCR <- interaction(DAT$JURS, DAT$BCR, sep="::", drop=TRUE)
+DAT$JBCR <- interaction(DAT$JURS, DAT$xBCR, sep="::", drop=TRUE)
 DAT$RoadBBS <- interaction(DAT$ROAD, DAT$isBBS, sep="::", drop=TRUE)
 
 JB <- c(
@@ -115,13 +123,13 @@ JB <- c(
 if (FALSE) {
 tab_fun <- function(i) {
     j <- DAT$JBCR == i & DAT$RoadBBS != "1::FALSE"
-    with(DAT[j,], table(NALC=HAB_NALC2, BBS=isBBS))
+    with(DAT[j,], table(NALC=HAB, BBS=isBBS))
 }
 dets <- lapply(JB, tab_fun)
 names(dets) <- JB
 dets
 
-ss <- !is.na(DAT$HAB_NALC1) & DAT$ROAD == 0 & DAT$JBCR %in% JB
+ss <- !is.na(DAT$HAB) & DAT$ROAD == 0 & DAT$JBCR %in% JB
 dat <- DAT[ss,]
 rn <- intersect(rownames(dat), rownames(YY))
 yy <- ifelse(as.matrix(YY[rn,])>0, 1, 0)
@@ -132,7 +140,8 @@ yyy <- yyy[,colSums(yyy)>=100]
 off <- OFF[rownames(yyy), colnames(yyy)]
 
 library(opticut)
-oc <- opticut(yyy ~ 1, strata=dat[rownames(yyy), "HAB_NALC2"], dist="binomial")
+library(vegan)
+oc <- opticut(yyy ~ 1, strata=dat[rownames(yyy), "HAB"], dist="binomial")
 plot(hclust(vegan::vegdist(t(summary(oc)$bestpart), "jaccard")), hang=-1, sub="", xlab="")
 plot(oc, cex.axis=0.75)
 1-round(vegan::vegdist(t(summary(oc)$bestpart), "jaccard"),3)
@@ -150,22 +159,31 @@ round(data.frame(D=sort(exp(coef(bestmodel(ol))))),4)
 }
 
 library(opticut)
+DAT$HAB_NALC1 <- DAT$HABTR
+DAT$HAB_NALC2 <- DAT$HAB
+DAT$YEAR <- DAT$YR+2013
+
 mm <- Mefa(YY, DAT, TAX, "inner")
 mm <- mm[!is.na(samp(mm)$RoadBBS) & !is.na(samp(mm)$JBCR) & !is.na(samp(mm)$HAB_NALC1),]
 #mm <- mm[,colSums(xtab(mm)>0) >= 100]
 
+
+get_subset <- function(region, road=FALSE) {
+  r <- if (road)
+    samp(mm)$RoadBBS == "1::TRUE" else samp(mm)$RoadBBS == "0::FALSE"
+  keep <- if (region == "all")
+    rep(TRUE, nrow(mm)) else samp(mm)$JBCR == region
+  mm[keep & r,]
+}
 tab_data <- function(spp, region) {
     r <- samp(mm)$RoadBBS %in% c("1::TRUE", "0::FALSE")
-    mmi <- mm[samp(mm)$JBCR == region & r,]
+    keep <- if (region == "all")
+      rep(TRUE, nrow(mm)) else samp(mm)$JBCR == region
+    mmi <- mm[keep & r,]
     y <- factor(ifelse(as.numeric(xtab(mmi)[,spp]) > 0, 1, 0), 0:1)
     x <- samp(mmi)$HAB_NALC1
     list(off=table(NALC=samp(mmi)$HAB_NALC1[samp(mmi)$ROAD==0], Det=y[samp(mmi)$ROAD==0]),
         on=table(NALC=samp(mmi)$HAB_NALC1[samp(mmi)$ROAD==1], Det=y[samp(mmi)$ROAD==1]))
-}
-get_subset <- function(region, road=FALSE) {
-    r <- if (road)
-        samp(mm)$RoadBBS == "1::TRUE" else samp(mm)$RoadBBS == "0::FALSE"
-    mm[samp(mm)$JBCR == region & r,]
 }
 find_levels <- function(spp, region, road=FALSE, m=1000) {
     mmi <- get_subset(region, road)
@@ -281,7 +299,7 @@ model_lcclim <- function(spp, region, road=FALSE, reclass=NULL, trend=FALSE) {
 model_all <- function(region, spp) {
     t0 <- proc.time()
     tab <- tab_data(spp, region)
-    Err <- structure("0 offroad detections", class="try-error")
+    Err <- structure("0 detections", class="try-error")
     if (sum(tab$off[,"1"]) > 0) {
         set.seed(1)
         ol <- find_levels(spp, region, road=FALSE, m=1000) # use subset of offroad data
@@ -331,7 +349,7 @@ model_all <- function(region, spp) {
     }
     out <- list(
         species=spp,
-        region=region,
+        region=if (missing(region)) "AllRegions" else region,
         levels=ol,
         table=tab,
         time=as.numeric(proc.time() - t0)[3L],
@@ -355,6 +373,10 @@ model_all <- function(region, spp) {
             lcclim_on=T13))
     out
 }
+spp <- "CAWA"
+res0 <- model_all(spp=spp, region="all")
+
+
 
 #SPP2 <- c("ALFL", "OVEN", "CAWA", "OSFL")
 for (spp in SPP) {
@@ -364,7 +386,7 @@ for (spp in SPP) {
         cat(spp, v, "\n");flush.console()
         res1[[v]] <- model_all(v, spp)
     }
-    save(res1, file=paste0("e:/peter/bam/2017/foam/foam-results_", spp, ".Rdata"))
+    save(res1, file=paste0("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/results/results_", spp, ".Rdata"))
 }
 
 res1[["AB::6"]]
@@ -374,7 +396,19 @@ h <- function(x) {
     data.frame(D=round(sort(exp(c(x$coef[1], x$coef[1]+x$coef[-1]))), 4))
 }
 
-xx <- lapply(res1, function(z) h(z$density$lcc_on))
+xx <- h(res0$density$lcc_on)
+
+g <- function(x) {
+    z <- x$density$lcc_on
+    logD <- exp(c(z$coef[1], z$coef[1]+z$coef[-1]))
+    names(logD) <- substr(names(logD), 2, nchar(names(logD)))
+    rc <- x$levels$levels[[length(x$levels$levels)]]
+    rc <- unique(unname(rc))
+    names(logD)[1] <- rc[!(rc %in% names(logD))]
+    logD
+}
+
+xx <- h(res0$density$lcc_on)
 
 ## todo:
 ## OK - add year effect
@@ -385,8 +419,8 @@ xx <- lapply(res1, function(z) h(z$density$lcc_on))
 ## - check spatial patterns and change climate if needed
 ## - pl/cl???
 
-fl <- list.files("e:/peter/bam/2017/foam")
-SPP <- substr(sapply(strsplit(fl, "_"), "[[", 2), 1, 4)
+#fl <- list.files("e:/peter/bam/2017/foam")
+#SPP <- substr(sapply(strsplit(fl, "_"), "[[", 2), 1, 4)
 
 LEV <- c("ConifDense", "Agr", "ConifOpen", "ConifSparse", "DecidDense",
     "DecidOpen", "DecidSparse", "Devel", "Grass", "MixedDense", "MixedOpen",
@@ -410,14 +444,15 @@ h2 <- function(x) {
 }
 
 Den <- list()
-#spp <- "CAWA"
+
+spp <- "CAWA"
 for (spp in SPP) {
-    fn <- paste0("e:/peter/bam/2017/foam/foam-results_", spp, ".Rdata")
+    fn <- paste0("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/results/results_", spp, ".Rdata")
     load(fn)
     res4 <- res1[c("ON::8", "QC::8", "ON::12", "QC::12")]
     Den[[spp]] <- sapply(res4, function(z) h2(z$density$lcc_on))
 }
-save(Den, file="e:/peter/bam/2017/Density-ON-QC.RData")
+save(Den, file="C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/results_CAWA.Rdata/")
 
 f <- function(x) {
     x <- t(x)
@@ -428,3 +463,15 @@ barplot(f(Den[[i]]), main=i, beside=TRUE, legend.text=TRUE,
     col=c("tomato", "gold", "grey", "turquoise"), ylab="density / max density")
 
 barplot(t(Den[[i]]), main=names(Den)[i], beside=TRUE)
+
+
+
+model_gw <- function(spp) {
+  ff <- y ~ HAB + ROAD + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 +
+    CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT
+  y <- as.numeric(xtab(mm)[,spp])
+  glm_skeleton(try(glm(ff, data=samp(mmi),
+                       family="poisson", offset=OFF[rownames(mmi),spp])),
+               keep_call=FALSE, vcov=TRUE)
+}
+

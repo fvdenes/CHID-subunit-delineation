@@ -374,7 +374,7 @@ model_all <- function(region, spp) {
     out
 }
 spp <- "CAWA"
-res0 <- model_all(spp=spp, region="all")
+res0 <- model_all(spp=spp, region="all") # this is the command to generate the model. to obtain confidence intervals, need to use vcov matrix, draw samples from a mmultivariate distribution and estimate quantiles.
 
 
 

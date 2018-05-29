@@ -1,236 +1,1163 @@
-# First attemmpt to fit CAWA national model as a GW regression
+# CAWA national model as a Geographically-weighted Regression for Canada Warbler (North America extent)
 
-##Step one
-###Load dataset
+# Load packages and data
+
 library("GWmodel")
 library(mefa4)
 library(sp)
 library(rgdal)
 library(opticut)
+library(raster)
+library(scales)
+library(mclust)
+library(RColorBrewer)
+library(colorspace)
+library(ggplot2)
 
-load("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/pack_2016-12-01.Rdata")
+#load("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/pack_2016-12-01.Rdata")
+load("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/subunits.RData")
+basemap<-readOGR("province_state_lcc.shp") ## Basemap for point plots
+BCRs<- readOGR("bcrfinallcc.shp")
+brandt<-readOGR("BRANDT_diss_type.shp")
+brandt<-spTransform(brandt,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
 
-
-
+#### Some data preparation ####
 DAT$HAB_NALC1 <- DAT$HABTR
 DAT$HAB_NALC2 <- DAT$HAB
-DAT$YEAR <- DAT$YR+2013
+DAT$YEAR <- DAT$YR+1997
 
 mm <- Mefa(YY, DAT, TAX, "inner")
-
 
 # Combine CAWA counts, offsets and covariates in a single dataset
 count <- YY[,"CAWA"]
 offset <- OFF[,"CAWA"]
 
 
-# thin_cawa_mm <-cawa_mm[sample(nrow(cawa_mm),2000),] # need to later figure out a proper sampling procedure (to make sure it represents spatial samples)
+### Sampling from the dataset (GW model will not run with full dataset) 
 
-
-
-## resampling blocks
+# Define year resampling blocks
 DAT$YR5 <- 0
 DAT$YR5[DAT$YEAR > 2000] <- 1
 DAT$YR5[DAT$YEAR > 2004] <- 2
 DAT$YR5[DAT$YEAR > 2009] <- 3
 table(DAT$YEAR,DAT$YR5)
 table(DAT$YR5)
-DAT$bootg <- interaction(DAT$Units, DAT$YR5, drop=TRUE)
 
-bbfun2 <- function(DAT1, B, out=0.1, seed=1234) {
-  set.seed(seed)
-  DAT1$SS_YR <- interaction(DAT1$SS, DAT1$YEAR, drop=TRUE)
-  DAT1$IDMAP <- seq_len(nrow(DAT1))
-  ## randomize input
-  DAT1 <- DAT1[sample.int(nrow(DAT1)),]
-  #    kk <- floor(nrow(DAT1) * (1-out))
-  #    DAT1k <- DAT1[1:kk,] # k as in *k*eep
-  kkk <- floor(nlevels(DAT1$SS_YR) * (1-out))
-  DAT1k <- DAT1[as.integer(DAT1$SS_YR) <= kkk,]
-  if (nlevels(droplevels(DAT1k$bootg)) != nlevels(droplevels(DAT1$bootg)))
-    stop("bootg problem: pick larger blocks for validation")
-  ## one run
-  r1fun <- function(DAT1k, replace=FALSE) {
-    ## get rid of resamples
-    DAT1k <- DAT1k[sample.int(nrow(DAT1k)),]
-    DAT1k <- nonDuplicated(DAT1k, SS_YR)
-    id2 <- list()
-    for (l in levels(DAT1k$bootg)) {
-      sset0 <- which(DAT1k$bootg == l)
-      id2[[l]] <- if (length(sset0) < 2)
-        sset0 else sample(sset0, length(sset0), replace=replace)
-    }
-    DAT1k$IDMAP[unname(unlist(id2))]
-  }
-  BB0 <- r1fun(DAT1k, replace=FALSE)
-  BB1 <- pbsapply(seq_len(B), function(i) r1fun(DAT1k, replace=TRUE))
-  cbind(BB0, BB1)
-  #aa <- unique(BB1)
-  #table(selected=DAT1$IDMAP %in% aa)
-  #table(selected=DAT1$IDMAP %in% aa, revisit=duplicated(DAT1$SS_YR))
-}
+# Define intersections
+DAT$bootg <- interaction(DAT$JURS, DAT$YR5, drop=TRUE)
 
+# Join objects
 cawa_mm<-cbind(count, offset,DAT)
 
-B<- 239
-BB <- bbfun2(cawa_mm, B, out=0.95)
-
-thin_cawa_mm <-cawa_mm[BB[,1],]
-
-nrow(BB)/nrow(cawa_mm)
-aa <- unique(BB)
-bb <- table(selected=seq_len(nrow(cawa_mm)) %in% aa)
-bb[2]/sum(bb)
+allpoints <- SpatialPointsDataFrame(coords=cbind(cawa_mm$X,cawa_mm$Y),proj4string =  CRS("+proj=longlat +ellps=WGS84"),data=cawa_mm)
+allpoints<-spTransform(allpoints,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
 
 
 
-
-ol<- optilevels(y=thin_cawa_mm$count, x=thin_cawa_mm$HAB, dist="poisson", offset=thin_cawa_mm$offset)
-thin_cawa_mm$HAB2<-thin_cawa_mm$HAB
-levels(thin_cawa_mm$HAB2)<-ol$level[[length(ol$level)]] 
-table(thin_cawa_mm$HAB,thin_cawa_mm$HAB2)
-
-
-mmsp <- SpatialPointsDataFrame(coords=cbind(thin_cawa_mm$X,thin_cawa_mm$Y),proj4string = CRS("+proj=longlat +ellps=WGS84"),data=thin_cawa_mm)
-
-spplot(pres.ggwr1, "classification", do.log = F,
-       key.space=list(x=0.2,y=0.3,corner=c(0,1)),
-       scales=list(draw=T),
-       main="Classification",
+spplot(allpoints,"count",do.log = F,legendEntries=as.character(0:4),
+       key.space=list(x=0.02,y=0.3,corner=c(0,1)),
        sp.layout=list(basemap))
 
 
-## Specify distance matrix:
-
- # view data points
-grd <- SpatialGrid(GridTopology(c(-164,40),c(0.5,0.5),c(225,56)),proj4string=CRS("+proj=longlat +ellps=WGS84"))
-plot(grd, axes=TRUE)
-points(coordinates(mmsp))
-
-# create distance matrix
-DM <- gw.dist(dp.locat = coordinates(mmsp), longlat=TRUE)
-
-# a simple models with HAB and ROAD only
-
-# obtain optimum bandwidth:
-bw.ggwr.1 <- bw.ggwr(count ~ HAB + ROAD + offset(mmsp$offset), data = mmsp, approach = "AICc", kernel = "bisquare", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
-
-load("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/subunits.RData")
-
-# fit model
-ggwr.1<-ggwr.basic(count ~ HAB + ROAD + offset(mmsp$offset), data = mmsp, bw = bw.ggwr.1, kernel = "bisquare", adaptive = TRUE, longlat=TRUE, family="poisson", dMat = DM)
-
-# results
-print(ggwr.1)
+spplot(allpoints[which(allpoints$count>0),],"count",do.log = F,cuts=4,legendEntries=as.character(1:4),
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       sp.layout=list(basemap))
 
 
+### A function to sample points with count>0 in each jurisdiction
+sample_jur<-function(data,N=20,seed=123){
+  set.seed(seed)
+  data2<-data[which(data$count>0),]
+  ls<-as.list(rep(NA,length(levels(data2$JURS))))
+  for(i in 1:length(levels(data2$JURS))){
+    data22<-data2[which(data2$JURS==levels(data2$JURS)[i]),]
+    if(table(data2$JURS)[i]>0){
+      if(table(data2$JURS)[i]<N){
+        ls[[i]]<-row.names(data22)
+      }
+      else{
+        ls[[i]]<-row.names(data22[sample(nrow(data22),size=N),]) 
+      }
+    }
+  }
+  ls<-unlist(ls)
+  ls<-ls[-which(is.na(ls))]
+  out<-match(x=ls,table = row.names(data))
+}
 
+#### A function to randomly sample from jurisdiction
+sample_max<-function(data,N=1000,seed=123){
+  set.seed(seed)
+  ls<-as.list(rep(NA,length(levels(data$JURS))))
+  for(i in 1:length(levels(data$JURS))){
+    data2<-data[which(data$JURS==levels(data$JURS)[i]),]
+    if(table(data$JURS)[i]>0){
+      if(table(data$JURS)[i]<N){
+        ls[[i]]<-row.names(data2)
+      }
+      else{
+        ls[[i]]<-row.names(data2[sample(nrow(data2),size=N),]) 
+      }
+    }
+  }
+  ls<-unlist(ls)
+  out<-match(x=ls,table = row.names(data))
+}
 
+#### A function to randomly sample from longitude intervals
+sample_long<-function(data,N=200,intervals=100,seed=123){
+  set.seed(seed)
+  maxlongitude<-max(data$X)
+  minlongitude<-min(data$X)
+  Xwidth<-(maxlongitude-minlongitude)/intervals
+  Xlimits<-minlongitude+c(0,Xwidth*1:intervals)
+  ls<-as.list(rep(NA,intervals))
+  for(i in 1:intervals){
+    data2<-data[which(data$X>Xlimits[i] & data$X<Xlimits[i+1]),]
+    if(nrow(data2)<N){
+      ls[[i]]<-row.names(data2)
+    }
+    else{
+      ls[[i]]<-row.names(data2[sample(nrow(data2),size=N),]) 
+    }
+  }
+  ls<-unlist(ls)
+  out<-match(x=ls,table = row.names(data))
+}
 
-# with climate variables
-## model with many covariates, seems to need a larger sample size
-
-
-
-bw.ggwr.2 <- bw.ggwr(count ~  HAB2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp$offset), data = mmsp, approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
-save.image("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/subunits.RData")
-
-
-
-# fit model - maybe try with bandwidth optimized for simpler model?
-ggwr.2<-ggwr.basic(count ~ HAB2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp$offset), data = mmsp, bw = bw.ggwr.2, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
-
-save("ggwr.2","C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/output/ggwr_0.Rdata")
-
-
-print(ggwr.2)
-
-
-
-
-# Run several models based on different samples of the BAM dataset
-
-ldf <- lapply(X=c(1:9),function(x){cawa_mm[BB[,x+1],]})
-names(ldf)<-1:9
-nameslist<-as.character(1:9)
-
-
-
-getGWmod <- function(x){
-  library(opticut)
-  library(GWmodel)
+#### A function to randomly sample from quadrants defined by latitude and longitude intervals.
+sample_quad<-function(data,N=20,Xintervals=100,Yintervals=60,seed=123,onlypres=F){
+  set.seed(seed)
+  if(onlypres==F){
+    maxlongitude<-max(data$X)
+    minlongitude<-min(data$X)
+    Xwidth<-(maxlongitude-minlongitude)/Xintervals
+    Xlimits<-minlongitude+c(0,Xwidth*1:Xintervals)
+    
+    maxlatitude<-max(data$Y)
+    minlatitude<-min(data$Y)
+    Ywidth<-(maxlatitude-minlatitude)/Yintervals
+    Ylimits<-minlatitude+c(0,Ywidth*1:Yintervals)
+    
+    ls<-array(NA,dim=c(Xintervals,Yintervals,N))
+    for(i in 1:Xintervals){
+      data2<-data[which(data$X>Xlimits[i] & data$X<Xlimits[i+1]),]
+      for(j in 1:Yintervals){
+        data3<-data2[which(data2$Y>Ylimits[j] & data2$Y<Ylimits[j+1]),]
+        if(nrow(data3)>0){
+          if(nrow(data3)<N){
+            ls[i,j,1:nrow(data3)]<-row.names(data3)
+          }
+          else{
+            ls[i,j,]<-row.names(data3[sample(nrow(data3),size=N),]) 
+          }
+        }
+      }
+    } 
+  }
   
-  thindata<-ldf[[x]]
-  ol<- optilevels(y=thindata$count, x=thindata$HAB, dist="poisson", offset=thindata$offset)
-  thindata$HAB2<-thindata$HAB
-  levels(thindata$HAB2)<-ol$level[[length(ol$level)]] 
-  
-  mmsp <- SpatialPointsDataFrame(coords=cbind(thindata$X,thindata$Y),proj4string = CRS("+proj=longlat +ellps=WGS84"),data=thindata)
-  
-  # create distance matrix
-  DM <- gw.dist(dp.locat = coordinates(mmsp), longlat=TRUE)
-  
-  bw <- 1675 # from bw_ggwr.2, using the exponentioal kernel on the 1st sample.
-  
-  ggwr<-ggwr.basic(count ~ HAB2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp$offset), data = mmsp, bw = bw, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
-  
-  wd<-"C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation"
-  #wd<-getwd()
-  outf <- paste0("ggwr_",x)
-  save("ggwr", file.path(wd,"output",paste0(outf,".Rdata")))
-  
-  return(ggwr)
+  else{
+    data2<-data[which(data$count>0),]
+    maxlongitude<-max(data2$X)
+    minlongitude<-min(data2$X)
+    Xwidth<-(maxlongitude-minlongitude)/Xintervals
+    Xlimits<-minlongitude+c(0,Xwidth*1:Xintervals)
+    
+    maxlatitude<-max(data2$Y)
+    minlatitude<-min(data2$Y)
+    Ywidth<-(maxlatitude-minlatitude)/Yintervals
+    Ylimits<-minlatitude+c(0,Ywidth*1:Yintervals)
+    
+    ls<-array(NA,dim=c(Xintervals,Yintervals,N))
+    for(i in 1:Xintervals){
+      data3<-data2[which(data2$X>Xlimits[i] & data2$X<Xlimits[i+1]),]
+      for(j in 1:Yintervals){
+        data4<-data3[which(data3$Y>Ylimits[j] & data3$Y<Ylimits[j+1]),]
+        if(nrow(data4)>0){
+          if(nrow(data4)<N){
+            ls[i,j,1:nrow(data4)]<-row.names(data4)
+          }
+          else{
+            ls[i,j,]<-row.names(data4[sample(nrow(data4),size=N),]) 
+          }
+        }
+      }
+    } 
+  }
+ 
+    ls<-c(ls)
+    ls<-ls[-which(is.na(ls))]
+  out<-match(x=ls,table = row.names(data))
 }
 
 
-models<- lapply(nameslist,getGWmod)
+plot_sampled<-function(obj,index,onlypres=T,show="count"){
+  thin_cawa_mm<-obj[index,]
+  mmsp <- SpatialPointsDataFrame(coords=cbind(thin_cawa_mm$X,thin_cawa_mm$Y),proj4string =  CRS("+proj=longlat +ellps=WGS84"),data=thin_cawa_mm)
+  mmsp<-spTransform(mmsp,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+  if(onlypres==T){
+    spplot(mmsp[which(mmsp$count>0),],show,do.log = F,cuts=4,legendEntries=as.character(1:4),
+           key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+           sp.layout=list(basemap))
+  }
+  else{
+    spplot(mmsp,show,do.log = F,legendEntries=as.character(0:4),
+           key.space=list(x=0.02,y=0.3,corner=c(0,1)),
+           sp.layout=list(basemap))
+  }
+}
+
+sample<-sample_jur(cawa_mm, N=30,seed=222)
+plot_sampled(obj=cawa_mm, index=sample, onlypres = T) 
 
 
 
+sample2<-sample_long(cawa_mm)
+plot_sampled(obj=cawa_mm, index=sample2, onlypres = F)
+plot_sampled(obj=cawa_mm, index=sample2, onlypres = F, show="YEAR")
 
-## Basemap
+sample3<-sample_quad(cawa_mm)
+sample4<-sample_quad(cawa_mm,onlypres = T, N=4)
 
-basemap<-readOGR("province_state_lcc.shp")
-proj4string((basemap))
+plot_sampled(obj=cawa_mm, index=sample3, onlypres = F)
+plot_sampled(obj=cawa_mm, index=sample4, onlypres = T)
+
+#### Check spatial distribution of sampled points with count >0 - make sure they are well-distributed ####
+union<-union(sample3,sample4)
+
+# function to plot points where CAWA count >0 from samples
+plot_sampled(obj=cawa_mm, index=union, onlypres = F) 
+plot_sampled(obj=cawa_mm, index=union, onlypres = T) 
+
+table(subset(thin_cawa_mm,JURS=="SK")$YEAR)
+thin_cawa_mm <-cawa_mm[union,]
+table(thin_cawa_mm$JURS)
+table(thin_cawa_mm$YEAR)
+
+# clear some of the workspace
+rm(list=ls()[! ls() %in% c("cawa_mm","thin_cawa_mm","basemap","BCRs","brandt","sample3","sample4","plot_sampled")])         
+           
+# apply landscape covariate optimization algorithm
+ol<- optilevels(y=thin_cawa_mm$count, x=thin_cawa_mm$HAB_NALC1, dist="poisson", offset=thin_cawa_mm$offset)
+thin_cawa_mm$HAB_NALC2<-thin_cawa_mm$HAB_NALC1
+levels(thin_cawa_mm$HAB_NALC2)<-ol$level[[length(ol$level)]] 
+table(thin_cawa_mm$HAB_NALC1,thin_cawa_mm$HAB_NALC2)
+
+# create spatial dataframe from sampled dataset
+mmsp <- SpatialPointsDataFrame(coords=cbind(thin_cawa_mm$X,thin_cawa_mm$Y),proj4string = CRS("+proj=longlat +ellps=WGS84"),data=thin_cawa_mm)
+
+#### GW modeling and clustering ####
+## Specify distance matrix:
+DM <- gw.dist(dp.locat = coordinates(mmsp), longlat=TRUE)
+
+# Optimize bandwidth - exponential kernel function
+bw.ggwr.exponential_grid <- bw.ggwr(count ~  HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp$offset), data = mmsp, approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
+
+# Fit model 
+ggwr_exponential_grid<-ggwr.basic(count ~ HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp$offset), data = mmsp, bw = bw.ggwr.exponential_grid, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
+
+save.image("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/subunits.RData")
+save("ggwr_exponential_grid",file="C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/output/ggwr_exponential_grid.Rdata")
+# load("ggwr_exponential","C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/output/ggwr_exponential.Rdata")
+
+print(ggwr_exponential_grid)
 
 
-#### Cluster analysis
-library(mclust)
-str(ggwr.1)
+summary(ggwr_exponential_grid$SDF)
+ggwr_exponential_grid$SDF$y
 
-mclust1<-Mclust(data=ggwr.1$SDF@data[which(ggwr.1$SDF@data$y>0),1:10],G=1:9) # clustering only the points where the species is present, i.e. y>0)
-summary(mclust1)
-summary(mclust1$BIC)
+#### Clustering 1-9 clusters####
+mclust_1<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:9) # vegetation type, tree height and topography
+summary(mclust_1)
 
-
-plot(mclust1)
-
+plot(mclust_1, "BIC")
+plot(mclust_1,"classification", dimens=c(12,13),symbols=16)
 
 
+###Plot survey points where count>0 coloured by cluster
 
-pres.ggwr1<-ggwr.1$SDF[which(ggwr.1$SDF@data$y>0),]
+# Load basemap layers
+#basemap<-readOGR("province_state_lcc.shp") #provinces and states
+#BCRs<- readOGR("bcrfinallcc.shp") # BCRs
 
-pres.ggwr1$classification<-as.factor(mclust1$classification)
-pres.ggwr1$uncertainty<-mclust1$uncertainty
+# Create spatial dataframe for points to be plotted
+pres.ggwr_exponential<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential$classification<-as.factor(mclust_1$classification)
+pres.ggwr_exponential$uncertainty<-mclust_1$uncertainty
 
-pres.ggwr1<-spTransform(pres.ggwr1,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+# Reproject
+pres.ggwr_exponential<-spTransform(pres.ggwr_exponential,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# Create simple plot of points to obtain plot extents, and crop BCR layer to that extent
+p<- spplot(pres.ggwr_exponential, "classification", do.log = F)
+p.extent<-extent(rbind(p$x.limits,p$y.limits))
+out<-crop(BCRs,p.extent)
+out$BCR<-as.factor(out$BCR)
+levels(out$BCR)<-1:21
 
 
-spplot(pres.ggwr1, "classification", do.log = F,
+out2<-crop(brandt,p.extent)
+
+set.seed(12)
+colsmapBCRs<-c("#ffffff",sample(rainbow_hcl(21,alpha=0.8))[-1])[out$BCR]
+
+# with BCRs
+spplot(pres.ggwr_exponential, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(9,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(9,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+
+spplot(pres.ggwr_exponential, "uncertainty", do.log = F,
        key.space=list(x=0.2,y=0.3,corner=c(0,1)),
-       scales=list(draw=T),
-       main="Classification",
-       sp.layout=list(basemap))
-
-spplot(pres.ggwr1, "uncertainty", do.log = F,
-       key.space=list(x=0.2,y=0.3,corner=c(0,1)),
-       scales=list(draw=T),
        main="Uncertainty",
        colorkey=T,
        sp.layout=list(basemap))
 
-drmclust1<-MclustDR(mclust1,lambda=1)
-summary(drmclust1)
-plot(drmclust1, what="contour")
-plot(drmclust1, what="boundaries", ngrid=500)
 
+# Summary of coefficients per clusters
+
+
+clust.coef.means<-as.data.frame(t(aggregate(pres.ggwr_exponential@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential@data$classification),mean)[,-1]))
+clust.coef.means<-cbind(Coef=factor(rownames(clust.coef.means),levels=rownames(clust.coef.means)),clust.coef.means)
+
+clust.coef.means$Coef<-as.character(clust.coef.means$Coef)
+clust.coef.means$Coef[2:10]<-substring(as.character(clust.coef.means$Coef)[2:10],first=10)
+clust.coef.means$Coef<-factor(clust.coef.means$Coef,levels=clust.coef.means$Coef)
+colnames(clust.coef.means)[2:10]<-paste0("mean",1:9)
+
+clust.coef.medians<-cbind(Coef=clust.coef.means$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential@data$classification),median)[,-1])))
+clust.coef.sd<-cbind(Coef=clust.coef.means$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential@data$classification),sd)[,-1])))
+colnames(clust.coef.sd)[2:10]<-paste0("sd",1:9)
+colnames(clust.coef.medians)[2:10]<-paste0("median",1:9)
+
+
+clust.summary<-cbind(clust.coef.means,clust.coef.medians[,-1],clust.coef.sd[,-1])
+
+p1<-ggplot(clust.summary,aes(Coef,mean1))
+p1+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(9,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.1))+theme(axis.text.x = element_text(size=12,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(9,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.15))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(9,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(9,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.2))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(9,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+ #orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(9,"Set1")[6],size=1,fatten=2,position=position_nudge(x=0.2))+#yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(9,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.15))+ #brown
+  geom_pointrange(aes(Coef,mean8,ymin=mean8-sd8,ymax=mean8+sd8),col=brewer.pal(9,"Set1")[8],size=1,fatten=2,position=position_nudge(x=-0.1))+ #pink
+  geom_pointrange(aes(Coef,mean9,ymin=mean9-sd9,ymax=mean9+sd9),col=brewer.pal(9,"Set1")[9],size=1,fatten=2,position=position_nudge(x=-0.05)) #grey
+
+# Draw convex hull polygons from clusters
+cluster1<-pres.ggwr_exponential@coords[which(pres.ggwr_exponential$classification==1),]
+ch<-chull(cluster1)
+coords1<-cluster1[c(ch,ch[1]),]
+spplot(cluster1, pch=16)
+lines(coords1, col="red")
+
+spplot(pres.ggwr_exponential[which(pres.ggwr_exponential$classification==1),],"classification", sp.layout=basemap)
+
+
+spplot(pres.ggwr_exponential, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(9,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+
+
+
+
+### Limiting number of clusters to 3: ####
+mclust_3<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:3) # vegetation type, tree height and topography
+summary(mclust_3)
+
+plot(mclust_3, "BIC")
+
+pres.ggwr_exponential3<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential3$classification<-as.factor(mclust_3$classification)
+pres.ggwr_exponential3$uncertainty<-mclust_3$uncertainty
+pres.ggwr_exponential3<-spTransform(pres.ggwr_exponential3,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# with BCRs
+spplot(pres.ggwr_exponential3, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(4,"Set1")[-3],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential3, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(4,"Set1")[-3],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means3<-as.data.frame(t(aggregate(pres.ggwr_exponential3@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential3@data$classification),mean)[,-1]))
+clust.coef.means3<-cbind(Coef=factor(rownames(clust.coef.means3),levels=rownames(clust.coef.means3)),clust.coef.means3)
+
+clust.coef.means3$Coef<-as.character(clust.coef.means3$Coef)
+clust.coef.means3$Coef[2:10]<-substring(as.character(clust.coef.means3$Coef)[2:10],first=10)
+clust.coef.means3$Coef<-factor(clust.coef.means3$Coef,levels=clust.coef.means3$Coef)
+colnames(clust.coef.means3)[2:4]<-paste0("mean",1:3)
+
+clust.coef.medians3<-cbind(Coef=clust.coef.means3$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential3@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential3@data$classification),median)[,-1])))
+clust.coef.sd3<-cbind(Coef=clust.coef.means3$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential3@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential3@data$classification),sd)[,-1])))
+colnames(clust.coef.sd3)[2:4]<-paste0("sd",1:3)
+colnames(clust.coef.medians3)[2:4]<-paste0("median",1:3)
+
+
+clust.summary3<-cbind(clust.coef.means3,clust.coef.medians3[,-1],clust.coef.sd3[,-1])
+
+p3<-ggplot(clust.summary3,aes(Coef,mean1))
+p3+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(4,"Set1")[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(4,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(4,"Set1")[4],size=1,fatten=2,position=position_nudge(x=0.05))
+
+
+
+
+
+### Limiting number of clusters to 4: ####
+mclust_4<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:4) # vegetation type, tree height and topography
+summary(mclust_4)
+
+plot(mclust_4, "BIC")
+plot(mclust_4,"classification", dimens=c(12,13),symbols=16)
+
+
+###Plot survey points where count>0 coloured by cluster
+
+# Load basemap layers
+#basemap<-readOGR("province_state_lcc.shp") #provinces and states
+#BCRs<- readOGR("bcrfinallcc.shp") # BCRs
+
+# Create spatial dataframe for points to be plotted
+pres.ggwr_exponential4<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential4$classification<-as.factor(mclust_4$classification)
+pres.ggwr_exponential4$uncertainty<-mclust_4$uncertainty
+
+# Reproject
+pres.ggwr_exponential4<-spTransform(pres.ggwr_exponential4,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+
+# with BCRs
+spplot(pres.ggwr_exponential4, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(4,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential4, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(4,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means4<-as.data.frame(t(aggregate(pres.ggwr_exponential4@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential4@data$classification),mean)[,-1]))
+clust.coef.means4<-cbind(Coef=factor(rownames(clust.coef.means4),levels=rownames(clust.coef.means4)),clust.coef.means4)
+
+clust.coef.means4$Coef<-as.character(clust.coef.means4$Coef)
+clust.coef.means4$Coef[2:10]<-substring(as.character(clust.coef.means4$Coef)[2:10],first=10)
+clust.coef.means4$Coef<-factor(clust.coef.means4$Coef,levels=clust.coef.means4$Coef)
+colnames(clust.coef.means4)[2:5]<-paste0("mean",1:4)
+
+clust.coef.medians4<-cbind(Coef=clust.coef.means4$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential4@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential4@data$classification),median)[,-1])))
+clust.coef.sd4<-cbind(Coef=clust.coef.means4$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential4@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential4@data$classification),sd)[,-1])))
+colnames(clust.coef.sd4)[2:5]<-paste0("sd",1:4)
+colnames(clust.coef.medians4)[2:5]<-paste0("median",1:4)
+
+
+clust.summary4<-cbind(clust.coef.means4,clust.coef.medians4[,-1],clust.coef.sd4[,-1])
+
+p4<-ggplot(clust.summary4,aes(Coef,mean1))
+p4+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(9,"Set1")[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd4,ymax=mean2+sd4),col=brewer.pal(9,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0.05))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(9,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0.1))+
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(9,"Set1")[4],size=1,fatten=2,position=position_nudge(x=0.15))
+
+
+
+### Limiting number of clusters to 5: ####
+mclust_5<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:5) # vegetation type, tree height and topography
+summary(mclust_5)
+
+plot(mclust_5, "BIC")
+
+pres.ggwr_exponential5<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential5$classification<-as.factor(mclust_5$classification)
+pres.ggwr_exponential5$uncertainty<-mclust_5$uncertainty
+pres.ggwr_exponential5<-spTransform(pres.ggwr_exponential5,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# with BCRs
+spplot(pres.ggwr_exponential5, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(5,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential5, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(5,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means5<-as.data.frame(t(aggregate(pres.ggwr_exponential5@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential5@data$classification),mean)[,-1]))
+clust.coef.means5<-cbind(Coef=factor(rownames(clust.coef.means5),levels=rownames(clust.coef.means5)),clust.coef.means5)
+
+clust.coef.means5$Coef<-as.character(clust.coef.means5$Coef)
+clust.coef.means5$Coef[2:10]<-substring(as.character(clust.coef.means5$Coef)[2:10],first=10)
+clust.coef.means5$Coef<-factor(clust.coef.means5$Coef,levels=clust.coef.means5$Coef)
+colnames(clust.coef.means5)[2:6]<-paste0("mean",1:5)
+
+clust.coef.medians5<-cbind(Coef=clust.coef.means5$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential5@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential5@data$classification),median)[,-1])))
+clust.coef.sd5<-cbind(Coef=clust.coef.means5$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential5@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential5@data$classification),sd)[,-1])))
+colnames(clust.coef.sd5)[2:6]<-paste0("sd",1:5)
+colnames(clust.coef.medians5)[2:6]<-paste0("median",1:5)
+
+
+clust.summary5<-cbind(clust.coef.means5,clust.coef.medians5[,-1],clust.coef.sd5[,-1])
+
+p5<-ggplot(clust.summary5,aes(Coef,mean1))
+p5+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.1))+
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=0.05))+
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.1))
+
+
+
+### Limiting number of clusters to 6: ####
+mclust_6<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:6) # vegetation type, tree height and topography
+summary(mclust_6)
+
+plot(mclust_6, "BIC")
+
+pres.ggwr_exponential6<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential6$classification<-as.factor(mclust_6$classification)
+pres.ggwr_exponential6$uncertainty<-mclust_6$uncertainty
+pres.ggwr_exponential6<-spTransform(pres.ggwr_exponential6,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# with BCRs
+spplot(pres.ggwr_exponential6, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(6,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential6, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(6,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means6<-as.data.frame(t(aggregate(pres.ggwr_exponential6@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential6@data$classification),mean)[,-1]))
+clust.coef.means6<-cbind(Coef=factor(rownames(clust.coef.means6),levels=rownames(clust.coef.means6)),clust.coef.means6)
+
+clust.coef.means6$Coef<-as.character(clust.coef.means6$Coef)
+clust.coef.means6$Coef[2:10]<-substring(as.character(clust.coef.means6$Coef)[2:10],first=10)
+clust.coef.means6$Coef<-factor(clust.coef.means6$Coef,levels=clust.coef.means6$Coef)
+colnames(clust.coef.means6)[2:7]<-paste0("mean",1:6)
+
+clust.coef.medians6<-cbind(Coef=clust.coef.means6$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential6@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential6@data$classification),median)[,-1])))
+clust.coef.sd6<-cbind(Coef=clust.coef.means6$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential6@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential6@data$classification),sd)[,-1])))
+colnames(clust.coef.sd6)[2:7]<-paste0("sd",1:6)
+colnames(clust.coef.medians6)[2:7]<-paste0("median",1:6)
+
+
+clust.summary6<-cbind(clust.coef.means6,clust.coef.medians6[,-1],clust.coef.sd6[,-1])
+
+p6<-ggplot(clust.summary6,aes(Coef,mean1))
+p6+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(6,"Set1")[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(6,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(6,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.1))+
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(6,"Set1")[4],size=1,fatten=2,position=position_nudge(x=0.05))+
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(6,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.1))+
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(6,"Set1")[6],size=1,fatten=2,position=position_nudge(x=0.15))
+
+
+
+### Limiting number of clusters to 7: ####
+mclust_7<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:7) # vegetation type, tree height and topography
+summary(mclust_7)
+
+plot(mclust_7, "BIC")
+
+pres.ggwr_exponential7<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential7$classification<-as.factor(mclust_7$classification)
+pres.ggwr_exponential7$uncertainty<-mclust_7$uncertainty
+pres.ggwr_exponential7<-spTransform(pres.ggwr_exponential7,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# with BCRs
+spplot(pres.ggwr_exponential7, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(9,"Set1")[-(7:8)],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential7, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(7,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means7<-as.data.frame(t(aggregate(pres.ggwr_exponential7@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential7@data$classification),mean)[,-1]))
+clust.coef.means7<-cbind(Coef=factor(rownames(clust.coef.means7),levels=rownames(clust.coef.means7)),clust.coef.means7)
+
+clust.coef.means7$Coef<-as.character(clust.coef.means7$Coef)
+clust.coef.means7$Coef[2:10]<-substring(as.character(clust.coef.means7$Coef)[2:10],first=10)
+clust.coef.means7$Coef<-factor(clust.coef.means7$Coef,levels=clust.coef.means7$Coef)
+colnames(clust.coef.means7)[2:8]<-paste0("mean",1:7)
+
+clust.coef.medians7<-cbind(Coef=clust.coef.means7$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential7@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential7@data$classification),median)[,-1])))
+clust.coef.sd7<-cbind(Coef=clust.coef.means7$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential7@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential7@data$classification),sd)[,-1])))
+colnames(clust.coef.sd7)[2:8]<-paste0("sd",1:7)
+colnames(clust.coef.medians7)[2:8]<-paste0("median",1:7)
+
+
+clust.summary7<-cbind(clust.coef.means7,clust.coef.medians7[,-1],clust.coef.sd7[,-1])
+
+p7<-ggplot(clust.summary7,aes(Coef,mean1))
+p7+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.1))+
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.1))+
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=0.05))+
+  geom_pointrange(aes(Coef,mean6,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.15))
+
+
+
+
+### Limiting number of clusters to 8: ####
+mclust_8<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:8) # vegetation type, tree height and topography
+summary(mclust_8)
+
+plot(mclust_8, "BIC")
+
+pres.ggwr_exponential8<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential8$classification<-as.factor(mclust_8$classification)
+pres.ggwr_exponential8$uncertainty<-mclust_8$uncertainty
+pres.ggwr_exponential8<-spTransform(pres.ggwr_exponential8,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# with BCRs
+spplot(pres.ggwr_exponential8, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(8,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential8, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=brewer.pal(8,"Set1"),
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means8<-as.data.frame(t(aggregate(pres.ggwr_exponential8@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential8@data$classification),mean)[,-1]))
+clust.coef.means8<-cbind(Coef=factor(rownames(clust.coef.means8),levels=rownames(clust.coef.means8)),clust.coef.means8)
+
+clust.coef.means8$Coef<-as.character(clust.coef.means8$Coef)
+clust.coef.means8$Coef[2:10]<-substring(as.character(clust.coef.means8$Coef)[2:10],first=10)
+clust.coef.means8$Coef<-factor(clust.coef.means8$Coef,levels=clust.coef.means8$Coef)
+colnames(clust.coef.means8)[2:9]<-paste0("mean",1:8)
+
+clust.coef.medians8<-cbind(Coef=clust.coef.means8$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential8@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential8@data$classification),median)[,-1])))
+clust.coef.sd8<-cbind(Coef=clust.coef.means8$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential8@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential8@data$classification),sd)[,-1])))
+colnames(clust.coef.sd8)[2:9]<-paste0("sd",1:8)
+colnames(clust.coef.medians8)[2:9]<-paste0("median",1:8)
+
+
+clust.summary8<-cbind(clust.coef.means8,clust.coef.medians8[,-1],clust.coef.sd8[,-1])
+
+p8<-ggplot(clust.summary8,aes(Coef,mean1))
+p8+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(8,"Set1")[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(8,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(8,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.1))+
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(8,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(8,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.1))+
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(8,"Set1")[6],size=1,fatten=2,position=position_nudge(x=0.05))+
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(8,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.15))+
+  geom_pointrange(aes(Coef,mean8,ymin=mean8-sd8,ymax=mean8+sd8),col=brewer.pal(8,"Set1")[8],size=1,fatten=2,position=position_nudge(x=0.15))
+
+
+
+### Limiting number of clusters to 10: ####
+mclust_10<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:10) # vegetation type, tree height and topography
+summary(mclust_10)
+
+plot(mclust_10, "BIC")
+
+pres.ggwr_exponential10<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential10$classification<-as.factor(mclust_10$classification)
+pres.ggwr_exponential10$uncertainty<-mclust_10$uncertainty
+pres.ggwr_exponential10<-spTransform(pres.ggwr_exponential10,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# with BCRs
+spplot(pres.ggwr_exponential10, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=cores[c(1:5,7:11)],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential10, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=cores[c(1:5,7:11)],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means10<-as.data.frame(t(aggregate(pres.ggwr_exponential10@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential10@data$classification),mean)[,-1]))
+clust.coef.means10<-cbind(Coef=factor(rownames(clust.coef.means10),levels=rownames(clust.coef.means10)),clust.coef.means10)
+
+clust.coef.means10$Coef<-as.character(clust.coef.means10$Coef)
+clust.coef.means10$Coef[2:10]<-substring(as.character(clust.coef.means10$Coef)[2:10],first=10)
+clust.coef.means10$Coef<-factor(clust.coef.means10$Coef,levels=clust.coef.means10$Coef)
+colnames(clust.coef.means10)[2:11]<-paste0("mean",1:10)
+
+clust.coef.medians10<-cbind(Coef=clust.coef.means10$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential10@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential10@data$classification),median)[,-1])))
+clust.coef.sd10<-cbind(Coef=clust.coef.means10$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential10@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential10@data$classification),sd)[,-1])))
+colnames(clust.coef.sd10)[2:11]<-paste0("sd",1:10)
+colnames(clust.coef.medians10)[2:11]<-paste0("median",1:10)
+
+
+clust.summary10<-cbind(clust.coef.means10,clust.coef.medians10[,-1],clust.coef.sd10[,-1])
+
+p10<-ggplot(clust.summary10,aes(Coef,mean1))
+p10+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=cores[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=cores[2],size=1,fatten=2,position=position_nudge(x=0.025))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=cores[3],size=1,fatten=2,position=position_nudge(x=0.05))+
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=cores[4],size=1,fatten=2,position=position_nudge(x=0.075))+
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=cores[5],size=1,fatten=2,position=position_nudge(x=0.1))+
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=cores[6],size=1,fatten=2,position=position_nudge(x=0.125))+
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=cores[7],size=1,fatten=2,position=position_nudge(x=0.15))+
+  geom_pointrange(aes(Coef,mean8,ymin=mean8-sd8,ymax=mean8+sd8),col=cores[8],size=1,fatten=2,position=position_nudge(x=0.175))+
+  geom_pointrange(aes(Coef,mean9,ymin=mean9-sd9,ymax=mean9+sd9),col=cores[9],size=1,fatten=2,position=position_nudge(x=-0.025))+
+  geom_pointrange(aes(Coef,mean10,ymin=mean10-sd10,ymax=mean10+sd10),col=cores[10],size=1,fatten=2,position=position_nudge(x=-0.05))
+
+
+### Limiting number of clusters to 11: ####
+mclust_11<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:11) # vegetation type, tree height and topography
+summary(mclust_11)
+
+plot(mclust_11, "BIC")
+
+pres.ggwr_exponential11<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential11$classification<-as.factor(mclust_11$classification)
+pres.ggwr_exponential11$uncertainty<-mclust_11$uncertainty
+pres.ggwr_exponential11<-spTransform(pres.ggwr_exponential11,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# with BCRs
+spplot(pres.ggwr_exponential11, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=cores[c(1:5,7:12)],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential11, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=cores[c(1:5,7:12)],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means11<-as.data.frame(t(aggregate(pres.ggwr_exponential11@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential11@data$classification),mean)[,-1]))
+clust.coef.means11<-cbind(Coef=factor(rownames(clust.coef.means11),levels=rownames(clust.coef.means11)),clust.coef.means11)
+
+clust.coef.means11$Coef<-as.character(clust.coef.means11$Coef)
+clust.coef.means11$Coef[2:10]<-substring(as.character(clust.coef.means11$Coef)[2:10],first=10)
+clust.coef.means11$Coef<-factor(clust.coef.means11$Coef,levels=clust.coef.means11$Coef)
+colnames(clust.coef.means11)[2:12]<-paste0("mean",1:11)
+
+clust.coef.medians11<-cbind(Coef=clust.coef.means11$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential11@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential11@data$classification),median)[,-1])))
+clust.coef.sd11<-cbind(Coef=clust.coef.means11$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential11@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential11@data$classification),sd)[,-1])))
+colnames(clust.coef.sd11)[2:12]<-paste0("sd",1:11)
+colnames(clust.coef.medians11)[2:12]<-paste0("median",1:11)
+
+
+clust.summary11<-cbind(clust.coef.means11,clust.coef.medians11[,-1],clust.coef.sd11[,-1])
+
+p11<-ggplot(clust.summary11,aes(Coef,mean1))
+p11+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=cores[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=cores[2],size=1,fatten=2,position=position_nudge(x=0.025))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=cores[3],size=1,fatten=2,position=position_nudge(x=0.05))+
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=cores[4],size=1,fatten=2,position=position_nudge(x=0.075))+
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=cores[5],size=1,fatten=2,position=position_nudge(x=0.1))+
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=cores[6],size=1,fatten=2,position=position_nudge(x=0.125))+
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=cores[7],size=1,fatten=2,position=position_nudge(x=0.15))+
+  geom_pointrange(aes(Coef,mean8,ymin=mean8-sd8,ymax=mean8+sd8),col=cores[8],size=1,fatten=2,position=position_nudge(x=0.175))+
+  geom_pointrange(aes(Coef,mean9,ymin=mean9-sd9,ymax=mean9+sd9),col=cores[9],size=1,fatten=2,position=position_nudge(x=-0.025))+
+  geom_pointrange(aes(Coef,mean10,ymin=mean10-sd10,ymax=mean10+sd10),col=cores[10],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean11,ymin=mean11-sd11,ymax=mean11+sd11),col=cores[11],size=1,fatten=2,position=position_nudge(x=-0.05))
+
+### Limiting number of clusters to 12: ####
+mclust_12<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:12) # vegetation type, tree height and topography
+summary(mclust_12)
+
+plot(mclust_12, "BIC")
+
+pres.ggwr_exponential12<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential12$classification<-as.factor(mclust_12$classification)
+pres.ggwr_exponential12$uncertainty<-mclust_12$uncertainty
+pres.ggwr_exponential12<-spTransform(pres.ggwr_exponential12,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# with BCRs
+spplot(pres.ggwr_exponential12, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=cores[1:12],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential12, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=cores[1:12],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means12<-as.data.frame(t(aggregate(pres.ggwr_exponential12@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential12@data$classification),mean)[,-1]))
+clust.coef.means12<-cbind(Coef=factor(rownames(clust.coef.means12),levels=rownames(clust.coef.means12)),clust.coef.means12)
+
+clust.coef.means12$Coef<-as.character(clust.coef.means12$Coef)
+clust.coef.means12$Coef[2:10]<-substring(as.character(clust.coef.means12$Coef)[2:10],first=10)
+clust.coef.means12$Coef<-factor(clust.coef.means12$Coef,levels=clust.coef.means12$Coef)
+colnames(clust.coef.means12)[2:13]<-paste0("mean",1:12)
+
+clust.coef.medians12<-cbind(Coef=clust.coef.means12$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential12@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential12@data$classification),median)[,-1])))
+clust.coef.sd12<-cbind(Coef=clust.coef.means12$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential12@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential12@data$classification),sd)[,-1])))
+colnames(clust.coef.sd12)[2:13]<-paste0("sd",1:12)
+colnames(clust.coef.medians12)[2:13]<-paste0("median",1:12)
+
+
+clust.summary12<-cbind(clust.coef.means12,clust.coef.medians12[,-1],clust.coef.sd12[,-1])
+
+p12<-ggplot(clust.summary12,aes(Coef,mean1))
+p12+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=cores[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=cores[2],size=1,fatten=2,position=position_nudge(x=0.025))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=cores[3],size=1,fatten=2,position=position_nudge(x=0.05))+
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=cores[4],size=1,fatten=2,position=position_nudge(x=0.075))+
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=cores[5],size=1,fatten=2,position=position_nudge(x=0.1))+
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=cores[6],size=1,fatten=2,position=position_nudge(x=0.125))+
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=cores[7],size=1,fatten=2,position=position_nudge(x=0.15))+
+  geom_pointrange(aes(Coef,mean8,ymin=mean8-sd8,ymax=mean8+sd8),col=cores[8],size=1,fatten=2,position=position_nudge(x=0.175))+
+  geom_pointrange(aes(Coef,mean9,ymin=mean9-sd9,ymax=mean9+sd9),col=cores[9],size=1,fatten=2,position=position_nudge(x=-0.025))+
+  geom_pointrange(aes(Coef,mean10,ymin=mean10-sd10,ymax=mean10+sd10),col=cores[10],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean11,ymin=mean11-sd11,ymax=mean11+sd11),col=cores[11],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean12,ymin=mean12-sd12,ymax=mean12+sd12),col=cores[12],size=1,fatten=2,position=position_nudge(x=-0.05))
+
+### Limiting number of clusters to 13: ####
+mclust_13<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:13) # vegetation type, tree height and topography
+summary(mclust_13)
+
+plot(mclust_13, "BIC")
+
+pres.ggwr_exponential13<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential13$classification<-as.factor(mclust_13$classification)
+pres.ggwr_exponential13$uncertainty<-mclust_13$uncertainty
+pres.ggwr_exponential13<-spTransform(pres.ggwr_exponential13,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# with BCRs
+spplot(pres.ggwr_exponential13, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=cores[1:13],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential13, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=cores[1:13],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means13<-as.data.frame(t(aggregate(pres.ggwr_exponential13@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential13@data$classification),mean)[,-1]))
+clust.coef.means13<-cbind(Coef=factor(rownames(clust.coef.means13),levels=rownames(clust.coef.means13)),clust.coef.means13)
+
+clust.coef.means13$Coef<-as.character(clust.coef.means13$Coef)
+clust.coef.means13$Coef[2:10]<-substring(as.character(clust.coef.means13$Coef)[2:10],first=10)
+clust.coef.means13$Coef<-factor(clust.coef.means13$Coef,levels=clust.coef.means13$Coef)
+colnames(clust.coef.means13)[2:14]<-paste0("mean",1:13)
+
+clust.coef.medians13<-cbind(Coef=clust.coef.means13$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential13@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential13@data$classification),median)[,-1])))
+clust.coef.sd13<-cbind(Coef=clust.coef.means13$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential13@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential13@data$classification),sd)[,-1])))
+colnames(clust.coef.sd13)[2:14]<-paste0("sd",1:13)
+colnames(clust.coef.medians13)[2:14]<-paste0("median",1:13)
+
+
+clust.summary13<-cbind(clust.coef.means13,clust.coef.medians13[,-1],clust.coef.sd13[,-1])
+
+p13<-ggplot(clust.summary13,aes(Coef,mean1))
+p13+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=cores[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=cores[2],size=1,fatten=2,position=position_nudge(x=0.025))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=cores[3],size=1,fatten=2,position=position_nudge(x=0.05))+
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=cores[4],size=1,fatten=2,position=position_nudge(x=0.075))+
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=cores[5],size=1,fatten=2,position=position_nudge(x=0.1))+
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=cores[6],size=1,fatten=2,position=position_nudge(x=0.125))+
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=cores[7],size=1,fatten=2,position=position_nudge(x=0.15))+
+  geom_pointrange(aes(Coef,mean8,ymin=mean8-sd8,ymax=mean8+sd8),col=cores[8],size=1,fatten=2,position=position_nudge(x=0.175))+
+  geom_pointrange(aes(Coef,mean9,ymin=mean9-sd9,ymax=mean9+sd9),col=cores[9],size=1,fatten=2,position=position_nudge(x=-0.025))+
+  geom_pointrange(aes(Coef,mean10,ymin=mean10-sd10,ymax=mean10+sd10),col=cores[10],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean11,ymin=mean11-sd11,ymax=mean11+sd11),col=cores[11],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean12,ymin=mean12-sd12,ymax=mean12+sd12),col=cores[12],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean13,ymin=mean13-sd13,ymax=mean13+sd13),col=cores[13],size=1,fatten=2,position=position_nudge(x=-0.05))
+
+
+### Limiting number of clusters to 14: ####
+mclust_14<- Mclust(data=ggwr_exponential_grid$SDF@data[which(ggwr_exponential_grid$SDF@data$y>0),c(1:15)[-11]],G=1:14) # vegetation type, tree height and topography
+summary(mclust_14)
+
+plot(mclust_14, "BIC")
+
+pres.ggwr_exponential14<-ggwr_exponential_grid$SDF[which(ggwr_exponential_grid$SDF@data$y>0),]
+pres.ggwr_exponential14$classification<-as.factor(mclust_14$classification)
+pres.ggwr_exponential14$uncertainty<-mclust_14$uncertainty
+pres.ggwr_exponential14<-spTransform(pres.ggwr_exponential14,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+
+# with BCRs
+spplot(pres.ggwr_exponential14, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=cores[1:14],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+
+set.seed(432)
+brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+# with Brandt boreal
+spplot(pres.ggwr_exponential14, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="Clustering by vegetation type, tree height, and topography",
+       col.regions=cores[1:14],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+# Summary of coefficients per clusters
+clust.coef.means14<-as.data.frame(t(aggregate(pres.ggwr_exponential14@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential14@data$classification),mean)[,-1]))
+clust.coef.means14<-cbind(Coef=factor(rownames(clust.coef.means14),levels=rownames(clust.coef.means14)),clust.coef.means14)
+
+clust.coef.means14$Coef<-as.character(clust.coef.means14$Coef)
+clust.coef.means14$Coef[2:10]<-substring(as.character(clust.coef.means14$Coef)[2:10],first=10)
+clust.coef.means14$Coef<-factor(clust.coef.means14$Coef,levels=clust.coef.means14$Coef)
+colnames(clust.coef.means14)[2:15]<-paste0("mean",1:143)
+
+clust.coef.medians14<-cbind(Coef=clust.coef.means14$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential14@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential14@data$classification),median)[,-1])))
+clust.coef.sd14<-cbind(Coef=clust.coef.means14$Coef,as.data.frame(t(aggregate(pres.ggwr_exponential14@data[,c(1:15)[-11]],list(group=pres.ggwr_exponential14@data$classification),sd)[,-1])))
+colnames(clust.coef.sd14)[2:15]<-paste0("sd",1:14)
+colnames(clust.coef.medians14)[2:15]<-paste0("median",1:14)
+
+
+clust.summary14<-cbind(clust.coef.means14,clust.coef.medians14[,-1],clust.coef.sd14[,-1])
+
+p14<-ggplot(clust.summary14,aes(Coef,mean1))
+p14+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=cores[1],size=1,fatten=2)+theme(axis.text.x = element_text(size=15,angle = 45, hjust = 1),axis.text.y = element_text(size=15))+ylab("")+xlab("")+
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=cores[2],size=1,fatten=2,position=position_nudge(x=0.025))+
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=cores[3],size=1,fatten=2,position=position_nudge(x=0.05))+
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=cores[4],size=1,fatten=2,position=position_nudge(x=0.075))+
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=cores[5],size=1,fatten=2,position=position_nudge(x=0.1))+
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=cores[6],size=1,fatten=2,position=position_nudge(x=0.125))+
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=cores[7],size=1,fatten=2,position=position_nudge(x=0.15))+
+  geom_pointrange(aes(Coef,mean8,ymin=mean8-sd8,ymax=mean8+sd8),col=cores[8],size=1,fatten=2,position=position_nudge(x=0.175))+
+  geom_pointrange(aes(Coef,mean9,ymin=mean9-sd9,ymax=mean9+sd9),col=cores[9],size=1,fatten=2,position=position_nudge(x=-0.025))+
+  geom_pointrange(aes(Coef,mean10,ymin=mean10-sd10,ymax=mean10+sd10),col=cores[10],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean11,ymin=mean11-sd11,ymax=mean11+sd11),col=cores[11],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean12,ymin=mean12-sd12,ymax=mean12+sd12),col=cores[12],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean13,ymin=mean13-sd13,ymax=mean13+sd13),col=cores[13],size=1,fatten=2,position=position_nudge(x=-0.05))+
+  geom_pointrange(aes(Coef,mean14,ymin=mean14-sd14,ymax=mean14+sd14),col=cores[14],size=1,fatten=2,position=position_nudge(x=-0.05))
+
+
+
+
+
+
+
+
+
+
+
+#### Re-run model for additional samples from BAM dataset, but only on the group 1 data from 3-cluster model (everything east of mid-Ontario). ####
+# clear some of the workspace
+rm(list=ls()[! ls() %in% c("cawa_mm","thin_cawa_mm","basemap","BCRs","brandt","plot_sampled","sample_quad","ggwr_exponential_grid","out","out2","pres.ggwr_exponential3")])  
+
+
+# define longitude that defines the western limit of the eastern cluster
+Ylim<-min(pres.ggwr_exponential3@coords[ which(pres.ggwr_exponential3$classification==1),1])
+
+cawa_mm_east<-cawa_mm[which(cawa_mm$Xcl>=Ylim),]
+
+samples_east<-as.list(rep(NA,10))
+
+names(samples_east)<-paste0("sample_east",1:10)
+
+sample_union<-function(seed=123){
+  s1<-sample_quad(cawa_mm_east,Xintervals=60,Yintervals=50,seed=seed)
+  s2<-sample_quad(cawa_mm_east,Xintervals=60,Yintervals=50,onlypres = T, N=4,seed=seed)
+  union<-union(s1,s2)
+  union
+}
+
+
+samples_east$sample_east1<- sample_union(seed=1)
+samples_east$sample_east2<- sample_union(seed=2)
+samples_east$sample_east3<- sample_union(seed=3)
+samples_east$sample_east4<- sample_union(seed=4)
+samples_east$sample_east5<- sample_union(seed=5)
+samples_east$sample_east6<- sample_union(seed=6)
+samples_east$sample_east7<- sample_union(seed=7)
+samples_east$sample_east8<- sample_union(seed=8)
+samples_east$sample_east9<- sample_union(seed=9)
+samples_east$sample_east10<- sample_union(seed=10)
+
+
+plot_sampled(obj=cawa_mm_east, index=samples_east$sample_east10, onlypres = F)
+plot_sampled(obj=cawa_mm_east, index=sample6, onlypres = T)
+
+str(thin_cawa_mm_east$sample_east2)
+
+# function to plot points where CAWA count >0 from samples
+plot_sampled(obj=cawa_mm_east, index=union2, onlypres = F) 
+plot_sampled(obj=cawa_mm_east, index=union2, onlypres = T) 
+
+# define datasets:
+thin_cawa_mm_east <-lapply(samples_east,function(x){cawa_mm_east[x,]})
+
+# landcover class optimization
+lc_optim<-function(thin_cawa_mm){
+  ol<- optilevels(y=thin_cawa_mm$count, x=thin_cawa_mm$HAB_NALC1, dist="poisson", offset=thin_cawa_mm$offset)
+  thin_cawa_mm$HAB_NALC2<-thin_cawa_mm$HAB_NALC1
+  levels(thin_cawa_mm$HAB_NALC2)<-ol$level[[length(ol$level)]]
+  return(thin_cawa_mm)
+}
+
+thin_cawa_mm_east<-lapply(thin_cawa_mm_east,lc_optim)
+
+
+# create spatial dataframe from sampled dataset
+
+mmsp_fun<-function(thin_cawa_mm){
+  mmsp<- SpatialPointsDataFrame(coords=cbind(thin_cawa_mm$X,thin_cawa_mm$Y),proj4string = CRS("+proj=longlat +ellps=WGS84"),data=thin_cawa_mm)
+}
+
+
+mmsp_east <- lapply(thin_cawa_mm_east,mmsp_fun)
+
+#### GW modeling and clustering - East samples ####
+
+## Specify distance matrix:
+
+ggwr_east<-function(index,modelname){
+  DM <- gw.dist(dp.locat = coordinates(mmsp_east[[index]]), longlat=TRUE)
+  
+  bw.ggwr.exponential_grid_east <- bw.ggwr(count ~  HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp_east[[index]]$offset), data = mmsp_east[[index]], approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
+  
+  # Fit model 
+  ggwr_exponential_grid_east<-ggwr.basic(count ~ HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp_east[[index]]$offset), data = mmsp_east[[index]], bw = bw.ggwr.exponential_grid_east, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
+  
+  
+  
+  save("ggwr_exponential_grid_east",file=paste0("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/output/",paste0(modelname,".Rdata")))
+  
+  return(ggwr_exponential_grid_east)
+} 
+
+
+
+
+
+
+save.image("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/subunits.RData")
+
+#ggwr_east_1<-ggwr_east(index=1,modelname="ggwr_east_1")
+#ggwr_east_2<-ggwr_east(index=2,modelname="ggwr_east_2")
+#ggwr_east_4<-ggwr_east(index=4,modelname="ggwr_east_4")
+#ggwr_east_6<-ggwr_east(index=6,modelname="ggwr_east_6")
+ggwr_east_8<-ggwr_east(index=8,modelname="ggwr_east_8")
+ggwr_east_10<-ggwr_east(index=10,modelname="ggwr_east_10")

@@ -1110,6 +1110,7 @@ list.model.matrix<-function(df){
   lccmodelmatrix<-as.data.frame(model.matrix( ~ HAB_NALC2-1,df))
   colnames(lccmodelmatrix)<-substring(colnames(lccmodelmatrix),first=10)
   colnames(lccmodelmatrix)<-gsub("+","_",colnames(lccmodelmatrix),fixed=T)
+  lccmodelmatrix<-apply(lccmodelmatrix,2,as.factor)
   df2<-cbind(df,lccmodelmatrix)
 }
 
@@ -1129,19 +1130,34 @@ mmsp_east <- lapply(thin_cawa_mm_east,mmsp_fun)
 
 ## Specify distance matrix:##
 
-ggwr_east<-function(index,modelname){
+#temp
+
+index<-1
+modelname<-"ggwr_east_1"
+#
+
+ggwr_east<-function(index,modelname,expandlcc=FALSE){
   DM <- gw.dist(dp.locat = coordinates(mmsp_east[[index]]), longlat=TRUE)
   
-  min_lcc_col<-which(colnames(mmsp_east[[index]]@data)=="bootg")+1
-  max_lcc_col<-ncol(mmsp_east[[index]]@data)
+  if(expandlcc==TRUE){
+    min_lcc_col<-which(colnames(mmsp_east[[index]]@data)=="bootg")+1
+    max_lcc_col<-ncol(mmsp_east[[index]]@data)
+    
+    form<-paste("count ~ ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT +",paste(colnames(mmsp_east[[index]]@data[min_lcc_col:max_lcc_col]),collapse = " + "), "+ offset(mmsp_east[[index]]$offset)")
+    
+    bw.ggwr.exponential_grid_east <- bw.ggwr(as.formula(form), data = mmsp_east[[index]], approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM)
+    
+    # Fit model 
+    ggwr_exponential_grid_east<-ggwr.basic(as.formula(form), data = mmsp_east[[index]], bw = bw.ggwr.exponential_grid_east, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
+  }
   
-  form<-paste("count ~ ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT +",paste(colnames(mmsp_east[[index]]@data[min_lcc_col:max_lcc_col]),collapse = " + "), "+ offset(mmsp_east[[index]]$offset)")
-  
-  bw.ggwr.exponential_grid_east <- bw.ggwr(as.formula(form), data = mmsp_east[[index]], approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
-  
-  # Fit model 
-  ggwr_exponential_grid_east<-ggwr.basic(as.formula(form), data = mmsp_east[[index]], bw = bw.ggwr.exponential_grid_east, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
-  
+  else{
+    bw.ggwr.exponential_grid_east <- bw.ggwr(count ~  HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp_east[[index]]$offset), data = mmsp_east[[index]], approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
+    
+    # Fit model
+    ggwr_exponential_grid_east<-ggwr.basic(count ~ HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp_east[[index]]$offset), data = mmsp_east[[index]], bw = bw.ggwr.exponential_grid_east, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
+  }
+
   assign(modelname,ggwr_exponential_grid_east)
   
   save(modelname,file=paste0("D:/CHID subunit delineation/output/",paste0(modelname,".Rdata")))

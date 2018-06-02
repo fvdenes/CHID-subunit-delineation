@@ -1,4 +1,4 @@
-# CAWA national model as a Geographically-weighted Regression for Canada Warbler (North America extent)
+# CAWA national model as a Geographically-weighted Regression for Canada Warbler (North America extent) ####
 
 # Load packages and data
 
@@ -13,9 +13,10 @@ library(mclust)
 library(RColorBrewer)
 library(colorspace)
 library(ggplot2)
+library(gridExtra)
 
 #load("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/pack_2016-12-01.Rdata")
-load("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/subunits.RData")
+load("D:/CHID subunit delineation/subunits.RData")
 basemap<-readOGR("province_state_lcc.shp") ## Basemap for point plots
 BCRs<- readOGR("bcrfinallcc.shp")
 brandt<-readOGR("BRANDT_diss_type.shp")
@@ -256,8 +257,8 @@ bw.ggwr.exponential_grid <- bw.ggwr(count ~  HAB_NALC2 + ROAD + HGT + HGT2 + CTI
 # Fit model 
 ggwr_exponential_grid<-ggwr.basic(count ~ HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp$offset), data = mmsp, bw = bw.ggwr.exponential_grid, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
 
-save.image("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/subunits.RData")
-save("ggwr_exponential_grid",file="C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/output/ggwr_exponential_grid.Rdata")
+save.image("D:/CHID subunit delineation/subunits.RData")
+save("ggwr_exponential_grid",file="D:/CHID subunit delineation//output/ggwr_exponential_grid.Rdata")
 # load("ggwr_exponential","C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/output/ggwr_exponential.Rdata")
 
 print(ggwr_exponential_grid)
@@ -1056,13 +1057,6 @@ p14+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=cores[1],size=1,fatte
 
 
 
-
-
-
-
-
-
-
 #### Re-run model for additional samples from BAM dataset, but only on the group 1 data from 3-cluster model (everything east of mid-Ontario). ####
 # clear some of the workspace
 rm(list=ls()[! ls() %in% c("cawa_mm","thin_cawa_mm","basemap","BCRs","brandt","plot_sampled","sample_quad","ggwr_exponential_grid","out","out2","pres.ggwr_exponential3")])  
@@ -1097,15 +1091,6 @@ samples_east$sample_east9<- sample_union(seed=9)
 samples_east$sample_east10<- sample_union(seed=10)
 
 
-plot_sampled(obj=cawa_mm_east, index=samples_east$sample_east10, onlypres = F)
-plot_sampled(obj=cawa_mm_east, index=sample6, onlypres = T)
-
-str(thin_cawa_mm_east$sample_east2)
-
-# function to plot points where CAWA count >0 from samples
-plot_sampled(obj=cawa_mm_east, index=union2, onlypres = F) 
-plot_sampled(obj=cawa_mm_east, index=union2, onlypres = T) 
-
 # define datasets:
 thin_cawa_mm_east <-lapply(samples_east,function(x){cawa_mm_east[x,]})
 
@@ -1120,6 +1105,17 @@ lc_optim<-function(thin_cawa_mm){
 thin_cawa_mm_east<-lapply(thin_cawa_mm_east,lc_optim)
 
 
+# expand landcover class variable into several
+list.model.matrix<-function(df){
+  lccmodelmatrix<-as.data.frame(model.matrix( ~ HAB_NALC2-1,df))
+  colnames(lccmodelmatrix)<-substring(colnames(lccmodelmatrix),first=10)
+  colnames(lccmodelmatrix)<-gsub("+","_",colnames(lccmodelmatrix),fixed=T)
+  df2<-cbind(df,lccmodelmatrix)
+}
+
+thin_cawa_mm_east<-lapply(thin_cawa_mm_east,list.model.matrix)
+
+str(thin_cawa_mm_east$sample_east4)
 # create spatial dataframe from sampled dataset
 
 mmsp_fun<-function(thin_cawa_mm){
@@ -1129,35 +1125,637 @@ mmsp_fun<-function(thin_cawa_mm){
 
 mmsp_east <- lapply(thin_cawa_mm_east,mmsp_fun)
 
-#### GW modeling and clustering - East samples ####
+#### GW modeling and clustering - East samples #####
 
-## Specify distance matrix:
+## Specify distance matrix:##
 
 ggwr_east<-function(index,modelname){
   DM <- gw.dist(dp.locat = coordinates(mmsp_east[[index]]), longlat=TRUE)
   
-  bw.ggwr.exponential_grid_east <- bw.ggwr(count ~  HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp_east[[index]]$offset), data = mmsp_east[[index]], approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
+  min_lcc_col<-which(colnames(mmsp_east[[index]]@data)=="bootg")+1
+  max_lcc_col<-ncol(mmsp_east[[index]]@data)
+  
+  form<-paste("count ~ ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT +",paste(colnames(mmsp_east[[index]]@data[min_lcc_col:max_lcc_col]),collapse = " + "), "+ offset(mmsp_east[[index]]$offset)")
+  
+  bw.ggwr.exponential_grid_east <- bw.ggwr(as.formula(form), data = mmsp_east[[index]], approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
   
   # Fit model 
-  ggwr_exponential_grid_east<-ggwr.basic(count ~ HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp_east[[index]]$offset), data = mmsp_east[[index]], bw = bw.ggwr.exponential_grid_east, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
+  ggwr_exponential_grid_east<-ggwr.basic(as.formula(form), data = mmsp_east[[index]], bw = bw.ggwr.exponential_grid_east, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
   
+  assign(modelname,ggwr_exponential_grid_east)
   
+  save(modelname,file=paste0("D:/CHID subunit delineation/output/",paste0(modelname,".Rdata")))
   
-  save("ggwr_exponential_grid_east",file=paste0("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/output/",paste0(modelname,".Rdata")))
-  
-  return(ggwr_exponential_grid_east)
+  return(get(modelname))
 } 
 
 
 
+save.image("D:/CHID subunit delineation/subunits.RData")
 
+ggwr_east_1<-ggwr_east(index=1,modelname="ggwr_east_1")
+ggwr_east_3<-ggwr_east(index=3,modelname="ggwr_east_3")
+ggwr_east_5<-ggwr_east(index=5,modelname="ggwr_east_5")
+ggwr_east_7<-ggwr_east(index=7,modelname="ggwr_east_7")
+ggwr_east_9<-ggwr_east(index=9,modelname="ggwr_east_9")
 
-
-save.image("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/subunits.RData")
-
-#ggwr_east_1<-ggwr_east(index=1,modelname="ggwr_east_1")
-#ggwr_east_2<-ggwr_east(index=2,modelname="ggwr_east_2")
-#ggwr_east_4<-ggwr_east(index=4,modelname="ggwr_east_4")
-#ggwr_east_6<-ggwr_east(index=6,modelname="ggwr_east_6")
+ggwr_east_2<-ggwr_east(index=2,modelname="ggwr_east_2")
+ggwr_east_4<-ggwr_east(index=4,modelname="ggwr_east_4")
+ggwr_east_6<-ggwr_east(index=6,modelname="ggwr_east_6")
 ggwr_east_8<-ggwr_east(index=8,modelname="ggwr_east_8")
 ggwr_east_10<-ggwr_east(index=10,modelname="ggwr_east_10")
+
+#### Generate east clusters ####
+
+
+# clear some of the workspace
+rm(list=ls()[! ls() %in% c("cawa_mm","thin_cawa_mm","basemap","BCRs","brandt","plot_sampled","sample_quad","ggwr_exponential_grid","out","out2","out3","out4","ggwr_east","ggwr_east_1","ggwr_east_10","ggwr_east_2","ggwr_east_3","ggwr_east_4","ggwr_east_5","ggwr_east_6","ggwr_east_7","ggwr_east_8","ggwr_east_9","pres.ggwr_exponential3")])  
+
+# a function for clustering of each model using vegetation type, tree height and topography coefficients
+gw_clust<-function(gwmodel,maxclusters=5, out3=NULL,out4=NULL, return.outs=FALSE){
+  
+  colmax<-which(colnames(gwmodel$SDF@data)=="CTI2")
+  roadcol<-which(colnames(gwmodel$SDF@data)=="ROAD")
+  
+  ##Clustering and BIC plot
+  mclust<- Mclust(data=gwmodel$SDF@data[which(gwmodel$SDF@data$y>0),c(1:colmax)[-roadcol]],G=1:maxclusters)  
+  
+  
+  ##Plot mapped clusters
+  # Create spatial dataframe for points to be plotted
+  pres.ggwr<-gwmodel$SDF[which(gwmodel$SDF@data$y>0),]
+  pres.ggwr$classification<-as.factor(mclust$classification)
+  pres.ggwr$uncertainty<-mclust$uncertainty
+  # Reproject
+  pres.ggwr<-spTransform(pres.ggwr,CRS("+proj=lcc +lat_1=49 +lat_2=77 +lat_0=0 +lon_0=-95 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"))
+  # Create simple plot of points to obtain plot extents, and crop BCR layer to that extent
+  p<- spplot(pres.ggwr, "classification", do.log = F)
+  p.extent<-extent(rbind(p$x.limits,p$y.limits))
+  
+  if(is.null(out3))  {
+    out3<-crop(BCRs,p.extent)
+    out3$BCR<-as.factor(out3$BCR)
+    levels(out3$BCR)<-1:11
+    }
+  
+  
+  
+  set.seed(12)
+  colsmapBCRs<-c("#ffffff",sample(rainbow_hcl(11,alpha=0.8))[-1])[out3$BCR]
+
+  # with BCRs
+  BCRplot<- spplot(pres.ggwr, "classification", do.log = F,
+         key.space=list(x=0.8,y=0.3,corner=c(0,1)),
+         main="",
+         col.regions=brewer.pal(maxclusters,"Set1"),
+         #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+         sp.layout=list(list("sp.polygons",out3,col="gainsboro",fill=colsmapBCRs),basemap))
+  
+  set.seed(432)
+  
+  if(is.null(out4)){out4<-crop(brandt,p.extent)}
+  
+  brandtcols<-sample(rainbow_hcl(4,alpha=0.8))
+  # with Brandt boreal
+  Brandtplot<-spplot(pres.ggwr, "classification", do.log = F,
+         key.space=list(x=0.8,y=0.3,corner=c(0,1)),
+         main="",
+         col.regions=brewer.pal(maxclusters,"Set1"),
+         #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+         sp.layout=list(list("sp.polygons",out4,col="gainsboro",fill=brandtcols),basemap))
+  
+  # Summary of coefficients per clusters
+  clust.coef.means<-as.data.frame(t(aggregate(pres.ggwr@data[,c(1:colmax)[-roadcol]],list(group=pres.ggwr@data$classification),mean)[,-1]))
+  clust.coef.means<-cbind(Coef=factor(rownames(clust.coef.means),levels=rownames(clust.coef.means)),clust.coef.means)
+  
+  clust.coef.means$Coef<-as.character(clust.coef.means$Coef)
+  clust.coef.means$Coef[2:(roadcol-1)]<-substring(as.character(clust.coef.means$Coef)[2:(roadcol-1)],first=10)
+  clust.coef.means$Coef<-factor(clust.coef.means$Coef,levels=clust.coef.means$Coef)
+  colnames(clust.coef.means)[-1]<-paste0("mean",1:maxclusters)
+  
+  clust.coef.sd<-cbind(Coef=clust.coef.means$Coef,as.data.frame(t(aggregate(pres.ggwr@data[,c(1:colmax)[-11]],list(group=pres.ggwr@data$classification),sd)[,-1])))
+  colnames(clust.coef.sd)[-1]<-paste0("sd",1:maxclusters)
+  
+  
+  clust.summary<-cbind(clust.coef.means,clust.coef.sd[,-1])
+  
+  # if maxclusters is different from 5, need to adjust the plot below
+  coefplot<-ggplot(clust.summary,aes(Coef,mean1))
+  
+  if(return.outs==FALSE){out<-list(mclust=mclust,pres.ggwr=pres.ggwr,BCRplot=BCRplot,Brandtplot=Brandtplot,coefplot=coefplot)}
+  else {out<-list(mclust=mclust,pres.ggwr=pres.ggwr,BCRplot=BCRplot,Brandtplot=Brandtplot,coefplot=coefplot,out3=out3,out4=out4)}
+  
+  return(out)
+}
+
+### East sample1 - 3 clusters ----
+result.3clust.sample1<-gw_clust(ggwr_east_1,maxclusters=3,return.outs=T)
+plot(result.3clust.sample1$mclust,"BIC")
+result.3clust.sample1$BCRplot
+result.3clust.sample1$Brandtplot
+p.3.1<-result.3clust.sample1$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.1))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0)) #green
+
+
+### East sample2 - 3 clusters ----
+result.3clust.sample2<-gw_clust(ggwr_east_2,maxclusters=3,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4)
+plot(result.3clust.sample2$mclust,"BIC")
+result.3clust.sample2$BCRplot
+result.3clust.sample2$Brandtplot
+p.3.2<-result.3clust.sample2$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.1)) #green
+
+### East sample3 - 3 clusters ----
+result.3clust.sample3<-gw_clust(ggwr_east_3,maxclusters=3,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4)
+plot(result.3clust.sample3$mclust,"BIC")
+result.3clust.sample3$BCRplot
+result.3clust.sample3$Brandtplot
+p.3.3<-result.3clust.sample3$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0)) #green
+
+### East sample4 - 3 clusters ----
+result.3clust.sample4<-gw_clust(ggwr_east_4,maxclusters=3,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4)
+plot(result.3clust.sample4$mclust,"BIC")
+result.3clust.sample4$BCRplot
+result.3clust.sample4$Brandtplot
+p.3.4<-result.3clust.sample4$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0)) #green
+
+### East sample5 - 3 clusters ----
+result.3clust.sample5<-gw_clust(ggwr_east_5,maxclusters=3,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4)
+plot(result.3clust.sample5$mclust,"BIC")
+result.3clust.sample5$BCRplot
+result.3clust.sample5$Brandtplot
+p.3.5<-result.3clust.sample5$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.1)) #green
+
+### East sample6 - 3 clusters ----
+result.3clust.sample6<-gw_clust(ggwr_east_6,maxclusters=3,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4)
+plot(result.3clust.sample6$mclust,"BIC")
+result.3clust.sample6$BCRplot
+result.3clust.sample6$Brandtplot
+p.3.6<-result.3clust.sample6$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.1)) #green
+
+### East sample7 - 3 clusters ----
+result.3clust.sample7<-gw_clust(ggwr_east_7,maxclusters=3,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4)
+plot(result.3clust.sample7$mclust,"BIC")
+result.3clust.sample7$BCRplot
+result.3clust.sample7$Brandtplot
+p.3.7<-result.3clust.sample7$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.1)) #green
+
+
+### East sample8 - 3 clusters ----
+result.3clust.sample8<-gw_clust(ggwr_east_8,maxclusters=3,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4)
+plot(result.3clust.sample8$mclust,"BIC")
+result.3clust.sample8$BCRplot
+result.3clust.sample8$Brandtplot
+p.3.8<-result.3clust.sample8$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0.1)) #green
+
+### East sample9 - 3 clusters ----
+result.3clust.sample9<-gw_clust(ggwr_east_9,maxclusters=3,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4)
+plot(result.3clust.sample9$mclust,"BIC")
+result.3clust.sample9$BCRplot
+result.3clust.sample9$Brandtplot
+p.3.9<-result.3clust.sample9$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=-0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0)) #green
+
+### East sample10 - 3 clusters ----
+result.3clust.sample10<-gw_clust(ggwr_east_10,maxclusters=3,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4)
+plot(result.3clust.sample10$mclust,"BIC")
+result.3clust.sample10$BCRplot
+result.3clust.sample10$Brandtplot
+p.3.10<-result.3clust.sample10$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0.1)) #green
+
+
+
+### East sample1 - 5 clusters ----
+result.5clust.sample1<-gw_clust(ggwr_east_1,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4,return.outs=T)
+plot(result.5clust.sample1$mclust,"BIC")
+result.5clust.sample1$BCRplot
+result.5clust.sample1$Brandtplot
+p.5.1<-result.5clust.sample1$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.2))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.2))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.1)) #orange
+
+### East sample2 - 5 clusters ----
+result.5clust.sample2<-gw_clust(ggwr_east_2,out3=result.5clust.sample1$out3,out4=result.5clust.sample1$out4)
+plot(result.5clust.sample2$mclust,"BIC")
+result.5clust.sample2$BCRplot
+result.5clust.sample2$Brandtplot
+p.5.2<-result.5clust.sample2$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=-0.1))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.2))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=0.1))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.2)) #orange
+
+### East sample3 - 5 clusters ----
+result.5clust.sample3<-gw_clust(ggwr_east_3,out3=result.5clust.sample1$out3,out4=result.5clust.sample1$out4)
+plot(result.5clust.sample3$mclust,"BIC")
+result.5clust.sample3$BCRplot
+result.5clust.sample3$Brandtplot
+p.5.3<-result.5clust.sample3$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=-0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.2))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=0.1))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.2)) #orange
+
+### East sample4 - 5 clusters ----
+result.5clust.sample4<-gw_clust(ggwr_east_4,out3=result.5clust.sample1$out3,out4=result.5clust.sample1$out4)
+plot(result.5clust.sample4$mclust,"BIC")
+result.5clust.sample4$BCRplot
+result.5clust.sample4$Brandtplot
+p.5.4<-result.5clust.sample4$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=-0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.2))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=0))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.2)) #orange
+
+### East sample5 - 5 clusters ----
+result.5clust.sample5<-gw_clust(ggwr_east_5,out3=result.5clust.sample1$out3,out4=result.5clust.sample1$out4)
+plot(result.5clust.sample5$mclust,"BIC")
+result.5clust.sample5$BCRplot
+result.5clust.sample5$Brandtplot
+p.5.5<-result.5clust.sample5$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.2))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=0))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.2)) #orange
+
+### East sample6 - 5 clusters ----
+result.5clust.sample6<-gw_clust(ggwr_east_6,out3=result.5clust.sample1$out3,out4=result.5clust.sample1$out4)
+plot(result.5clust.sample6$mclust,"BIC")
+result.5clust.sample6$BCRplot
+result.5clust.sample6$Brandtplot
+p.5.6<-result.5clust.sample6$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.2))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.1))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=-0.2)) #orange
+
+### East sample7 - 5 clusters ----
+result.5clust.sample7<-gw_clust(ggwr_east_7,out3=result.5clust.sample1$out3,out4=result.5clust.sample1$out4)
+plot(result.5clust.sample7$mclust,"BIC")
+result.5clust.sample7$BCRplot
+result.5clust.sample7$Brandtplot
+p.5.7<-result.5clust.sample7$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=-0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0.2))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=-0.2))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=0))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.1)) #orange
+
+
+### East sample8 - 5 clusters ----
+result.5clust.sample8<-gw_clust(ggwr_east_8,out3=result.5clust.sample1$out3,out4=result.5clust.sample1$out4)
+plot(result.5clust.sample8$mclust,"BIC")
+result.5clust.sample8$BCRplot
+result.5clust.sample8$Brandtplot
+p.5.8<-result.5clust.sample8$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0.2))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0.1))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.2))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=-0.1)) #orange
+
+### East sample9 - 5 clusters ----
+result.5clust.sample9<-gw_clust(ggwr_east_9,out3=result.5clust.sample1$out3,out4=result.5clust.sample1$out4)
+plot(result.5clust.sample9$mclust,"BIC")
+result.5clust.sample9$BCRplot
+result.5clust.sample9$Brandtplot
+p.5.9<-result.5clust.sample9$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=-0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0.2))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.2))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0)) #orange
+
+### East sample10 - 5 clusters ----
+result.5clust.sample10<-gw_clust(ggwr_east_10,out3=result.5clust.sample1$out3,out4=result.5clust.sample1$out4)
+plot(result.5clust.sample10$mclust,"BIC")
+result.5clust.sample10$BCRplot
+result.5clust.sample10$Brandtplot
+p.5.10<-result.5clust.sample10$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(5,"Set1")[1],size=1,fatten=2,position=position_nudge(x=-0.1))+theme(axis.text.x = element_text(size=9,angle = 60, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(5,"Set1")[2],size=1,fatten=2,position=position_nudge(x=0.1))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(5,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(5,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.2))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(5,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.2)) #orange
+
+
+### East sample1 - 7 clusters ----
+result.7clust.sample1<-gw_clust(ggwr_east_1,maxclusters=7,out3=result.3clust.sample1$out3,out4=result.3clust.sample1$out4,return.outs=T)
+plot(result.7clust.sample1$mclust,"BIC")
+result.7clust.sample1$BCRplot
+result.7clust.sample1$Brandtplot
+p.7.1<-result.7clust.sample1$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.15))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+#orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=-0.1))+ #yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.1))#brown
+
+### East sample2 - 7 clusters ----
+result.7clust.sample2<-gw_clust(ggwr_east_2,maxclusters=7,out3=result.7clust.sample1$out3,out4=result.7clust.sample1$out4)
+plot(result.7clust.sample2$mclust,"BIC")
+result.7clust.sample2$BCRplot
+result.7clust.sample2$Brandtplot
+p.7.2<-result.7clust.sample2$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.15))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+#orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=-0.1))+ #yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.1))#brown
+
+### East sample3 - 7 clusters ----
+result.7clust.sample3<-gw_clust(ggwr_east_3,maxclusters=7,out3=result.7clust.sample1$out3,out4=result.7clust.sample1$out4)
+plot(result.7clust.sample3$mclust,"BIC")
+result.7clust.sample3$BCRplot
+result.7clust.sample3$Brandtplot
+p.7.3<-result.7clust.sample3$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.15))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+#orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=-0.1))+ #yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.1))#brown
+
+### East sample4 - 7 clusters ----
+result.7clust.sample4<-gw_clust(ggwr_east_4,maxclusters=7,out3=result.7clust.sample1$out3,out4=result.7clust.sample1$out4)
+plot(result.7clust.sample4$mclust,"BIC")
+result.7clust.sample4$BCRplot
+result.7clust.sample4$Brandtplot
+p.7.4<-result.7clust.sample4$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.15))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+#orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=-0.1))+ #yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.1))#brown
+
+
+### East sample5 - 7 clusters ----
+result.7clust.sample5<-gw_clust(ggwr_east_5,maxclusters=7,out3=result.7clust.sample1$out3,out4=result.7clust.sample1$out4)
+plot(result.7clust.sample5$mclust,"BIC")
+result.7clust.sample5$BCRplot
+result.7clust.sample5$Brandtplot
+p.7.5<-result.7clust.sample5$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.15))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+#orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=-0.1))+ #yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.1))#brown
+
+
+### East sample6 - 7 clusters ----
+result.7clust.sample6<-gw_clust(ggwr_east_6,maxclusters=7,out3=result.7clust.sample1$out3,out4=result.7clust.sample1$out4)
+plot(result.7clust.sample6$mclust,"BIC")
+result.7clust.sample6$BCRplot
+result.7clust.sample6$Brandtplot
+p.7.6<-result.7clust.sample6$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.15))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+#orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=-0.1))+ #yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.1))#brown
+
+
+### East sample7 - 7 clusters ----
+result.7clust.sample7<-gw_clust(ggwr_east_7,maxclusters=7,out3=result.7clust.sample1$out3,out4=result.7clust.sample1$out4)
+plot(result.7clust.sample7$mclust,"BIC")
+result.7clust.sample7$BCRplot
+result.7clust.sample7$Brandtplot
+p.7.7<-result.7clust.sample7$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.15))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+#orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=-0.1))+ #yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.1))#brown
+
+
+
+### East sample8 - 7 clusters ----
+result.7clust.sample8<-gw_clust(ggwr_east_8,maxclusters=7,out3=result.7clust.sample1$out3,out4=result.7clust.sample1$out4)
+plot(result.7clust.sample8$mclust,"BIC")
+result.7clust.sample8$BCRplot
+result.7clust.sample8$Brandtplot
+p.7.8<-result.7clust.sample8$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.15))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+#orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=-0.1))+ #yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.1))#brown
+
+
+### East sample9 - 7 clusters ----
+result.7clust.sample9<-gw_clust(ggwr_east_9,maxclusters=7,out3=result.7clust.sample1$out3,out4=result.7clust.sample1$out4)
+plot(result.7clust.sample9$mclust,"BIC")
+result.7clust.sample9$BCRplot
+result.7clust.sample9$Brandtplot
+p.7.9<-result.7clust.sample9$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.15))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+#orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=-0.1))+ #yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.1))#brown
+
+
+### East sample10 - 7 clusters ----
+result.7clust.sample10<-gw_clust(ggwr_east_10,maxclusters=7,out3=result.7clust.sample1$out3,out4=result.7clust.sample1$out4)
+plot(result.7clust.sample10$mclust,"BIC")
+result.7clust.sample10$BCRplot
+result.7clust.sample10$Brandtplot
+p.7.10<-result.7clust.sample10$coefplot+geom_pointrange(aes(ymin=mean1-sd1,ymax=mean1+sd1),col=brewer.pal(7,"Set1")[1],size=1,fatten=2,position=position_nudge(x=0.15))+theme(axis.text.x = element_text(size=9,angle = 45, hjust = 1),axis.text.y = element_text(size=12))+ylab("")+xlab("")+ # red
+  geom_pointrange(aes(Coef,mean2,ymin=mean2-sd2,ymax=mean2+sd2),col=brewer.pal(7,"Set1")[2],size=1,fatten=2,position=position_nudge(x=-0.05))+ #blue
+  geom_pointrange(aes(Coef,mean3,ymin=mean3-sd3,ymax=mean3+sd3),col=brewer.pal(7,"Set1")[3],size=1,fatten=2,position=position_nudge(x=0))+ #green
+  geom_pointrange(aes(Coef,mean4,ymin=mean4-sd4,ymax=mean4+sd4),col=brewer.pal(7,"Set1")[4],size=1,fatten=2,position=position_nudge(x=-0.15))+ #purple
+  geom_pointrange(aes(Coef,mean5,ymin=mean5-sd5,ymax=mean5+sd5),col=brewer.pal(7,"Set1")[5],size=1,fatten=2,position=position_nudge(x=0.05))+#orange
+  geom_pointrange(aes(Coef,mean6,ymin=mean6-sd6,ymax=mean6+sd6),col=brewer.pal(7,"Set1")[6],size=1,fatten=2,position=position_nudge(x=-0.1))+ #yellow
+  geom_pointrange(aes(Coef,mean7,ymin=mean7-sd7,ymax=mean7+sd7),col=brewer.pal(7,"Set1")[7],size=1,fatten=2,position=position_nudge(x=0.1))#brown
+
+
+
+# composite plots ----
+
+
+# with BCRs
+p1<-spplot(pres.ggwr_exponential3, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="",
+       col.regions=brewer.pal(4,"Set1")[-3],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out,col="gainsboro",fill=colsmapBCRs),basemap)
+)
+p2<-
+# with Brandt boreal
+spplot(pres.ggwr_exponential3, "classification", do.log = F,
+       key.space=list(x=0.5,y=0.9,corner=c(0,1)),
+       main="",
+       col.regions=brewer.pal(4,"Set1")[-3],
+       #sp.layout=list(list("sp.polygons",out,col="lightgrey",fill=alpha(c("#ffffff",rainbow(18)[-1]),0.3)[out$BCR]),basemap)
+       sp.layout=list(list("sp.polygons",out2,col="gainsboro",fill=brandtcols),basemap)
+)
+
+
+jpeg("3clustCanada.jpg",width=20,height=5,units="in",quality = 100, res=72)
+grid.arrange(p1,p2,nrow=1)
+dev.off()
+
+
+jpeg("3clustCoefs.jpg",width=20,height=25,units="in",quality = 100, res=120)
+grid.arrange(p.3.1,p.3.2,p.3.3,p.3.4,p.3.5,p.3.6,p.3.7,p.3.8,p.3.9,p.3.10,nrow=5)
+dev.off()
+
+jpeg("3clustBCR.jpg",width=20,height=25,units="in",quality = 100, res=72)
+grid.arrange(result.3clust.sample1$BCRplot,
+             result.3clust.sample2$BCRplot,
+             result.3clust.sample3$BCRplot,
+             result.3clust.sample4$BCRplot,
+             result.3clust.sample5$BCRplot,
+             result.3clust.sample6$BCRplot,
+             result.3clust.sample7$BCRplot,
+             result.3clust.sample8$BCRplot,
+             result.3clust.sample9$BCRplot,
+             result.3clust.sample10$BCRplot,
+             nrow=5)
+dev.off()
+
+
+jpeg("3clustBrandt.jpg",width=20,height=25,units="in",quality = 100, res=72)
+grid.arrange(result.3clust.sample1$Brandtplot,
+             result.3clust.sample2$Brandtplot,
+             result.3clust.sample3$Brandtplot,
+             result.3clust.sample4$Brandtplot,
+             result.3clust.sample5$Brandtplot,
+             result.3clust.sample6$Brandtplot,
+             result.3clust.sample7$Brandtplot,
+             result.3clust.sample8$Brandtplot,
+             result.3clust.sample9$Brandtplot,
+             result.3clust.sample10$Brandtplot,
+             nrow=5)
+dev.off()
+
+jpeg("3BICplots.jpg",width=12,height=15,units="in",quality = 100, res=150)
+par(mfrow=c(5,2))
+plot(result.3clust.sample1$mclust,"BIC")
+plot(result.3clust.sample2$mclust,"BIC")
+plot(result.3clust.sample3$mclust,"BIC")
+plot(result.3clust.sample4$mclust,"BIC")
+plot(result.3clust.sample5$mclust,"BIC")
+plot(result.3clust.sample6$mclust,"BIC")
+plot(result.3clust.sample7$mclust,"BIC")
+plot(result.3clust.sample8$mclust,"BIC")
+plot(result.3clust.sample9$mclust,"BIC")
+plot(result.3clust.sample10$mclust,"BIC")
+dev.off()
+
+jpeg("5clustBCR.jpg",width=20,height=25,units="in",quality = 100, res=72)
+grid.arrange(result.5clust.sample1$BCRplot,
+             result.5clust.sample2$BCRplot,
+             result.5clust.sample3$BCRplot,
+             result.5clust.sample4$BCRplot,
+             result.5clust.sample5$BCRplot,
+             result.5clust.sample6$BCRplot,
+             result.5clust.sample7$BCRplot,
+             result.5clust.sample8$BCRplot,
+             result.5clust.sample9$BCRplot,
+             result.5clust.sample10$BCRplot,
+             nrow=5)
+dev.off()
+
+jpeg("5clustBrandt.jpg",width=20,height=25,units="in",quality = 100, res=72)
+grid.arrange(result.5clust.sample1$Brandtplot,
+             result.5clust.sample2$Brandtplot,
+             result.5clust.sample3$Brandtplot,
+             result.5clust.sample4$Brandtplot,
+             result.5clust.sample5$Brandtplot,
+             result.5clust.sample6$Brandtplot,
+             result.5clust.sample7$Brandtplot,
+             result.5clust.sample8$Brandtplot,
+             result.5clust.sample9$Brandtplot,
+             result.5clust.sample10$Brandtplot,
+             nrow=5)
+dev.off()
+
+jpeg("5clustCoefs.jpg",width=20,height=25,units="in",quality = 100, res=120)
+grid.arrange(p.5.1,p.5.2,p.5.3,p.5.4,p.5.5,p.5.6,p.5.7,p.5.8,p.5.9,p.5.10,nrow=5)
+dev.off()
+
+
+jpeg("5BICplots.jpg",width=12,height=15,units="in",quality = 100, res=150)
+par(mfrow=c(5,2))
+plot(result.5clust.sample1$mclust,"BIC")
+plot(result.5clust.sample2$mclust,"BIC")
+plot(result.5clust.sample3$mclust,"BIC")
+plot(result.5clust.sample4$mclust,"BIC")
+plot(result.5clust.sample5$mclust,"BIC")
+plot(result.5clust.sample6$mclust,"BIC")
+plot(result.5clust.sample7$mclust,"BIC")
+plot(result.5clust.sample8$mclust,"BIC")
+plot(result.5clust.sample9$mclust,"BIC")
+plot(result.5clust.sample10$mclust,"BIC")
+dev.off()
+
+jpeg("7clustBCR.jpg",width=20,height=25,units="in",quality = 100, res=72)
+grid.arrange(result.7clust.sample1$BCRplot,
+             result.7clust.sample2$BCRplot,
+             result.7clust.sample3$BCRplot,
+             result.7clust.sample4$BCRplot,
+             result.7clust.sample5$BCRplot,
+             result.7clust.sample6$BCRplot,
+             result.7clust.sample7$BCRplot,
+             result.7clust.sample8$BCRplot,
+             result.7clust.sample9$BCRplot,
+             result.7clust.sample10$BCRplot,
+             nrow=5)
+dev.off()
+
+jpeg("7clustBrandt.jpg",width=20,height=25,units="in",quality = 100, res=72)
+grid.arrange(result.7clust.sample1$Brandtplot,
+             result.7clust.sample2$Brandtplot,
+             result.7clust.sample3$Brandtplot,
+             result.7clust.sample4$Brandtplot,
+             result.7clust.sample5$Brandtplot,
+             result.7clust.sample6$Brandtplot,
+             result.7clust.sample7$Brandtplot,
+             result.7clust.sample8$Brandtplot,
+             result.7clust.sample9$Brandtplot,
+             result.7clust.sample10$Brandtplot,
+             nrow=5)
+dev.off()
+
+jpeg("7BICplots.jpg",width=12,height=15,units="in",quality = 100, res=150)
+par(mfrow=c(5,2))
+plot(result.7clust.sample1$mclust,"BIC")
+plot(result.7clust.sample2$mclust,"BIC")
+plot(result.7clust.sample3$mclust,"BIC")
+plot(result.7clust.sample4$mclust,"BIC")
+plot(result.7clust.sample5$mclust,"BIC")
+plot(result.7clust.sample6$mclust,"BIC")
+plot(result.7clust.sample7$mclust,"BIC")
+plot(result.7clust.sample8$mclust,"BIC")
+plot(result.7clust.sample9$mclust,"BIC")
+plot(result.7clust.sample10$mclust,"BIC")
+dev.off()
+
+jpeg("7clustCoefs.jpg",width=20,height=25,units="in",quality = 100, res=120)
+grid.arrange(p.7.1,p.7.2,p.7.3,p.7.4,p.7.5,p.7.6,p.7.7,p.7.8,p.7.9,p.7.10,nrow=5)
+dev.off()

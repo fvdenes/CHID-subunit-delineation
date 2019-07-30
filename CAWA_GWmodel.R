@@ -15,7 +15,7 @@ library(colorspace)
 library(ggplot2)
 library(gridExtra)
 
-#load("C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/pack_2016-12-01.Rdata")
+#load("D:/CHID subunit delineation/pack_2016-12-01.Rdata")
 load("D:/CHID subunit delineation/subunits.RData")
 basemap<-readOGR("province_state_lcc.shp") ## Basemap for point plots
 BCRs<- readOGR("bcrfinallcc.shp")
@@ -237,6 +237,7 @@ table(thin_cawa_mm$YEAR)
 
 # clear some of the workspace
 rm(list=ls()[! ls() %in% c("cawa_mm","thin_cawa_mm","basemap","BCRs","brandt","sample3","sample4","plot_sampled")])         
+gc()
            
 # apply landscape covariate optimization algorithm
 ol<- optilevels(y=thin_cawa_mm$count, x=thin_cawa_mm$HAB_NALC1, dist="poisson", offset=thin_cawa_mm$offset)
@@ -254,10 +255,12 @@ DM <- gw.dist(dp.locat = coordinates(mmsp), longlat=TRUE)
 # Optimize bandwidth - exponential kernel function
 bw.ggwr.exponential_grid <- bw.ggwr(count ~  HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp$offset), data = mmsp, approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
 
+bw.ggwr.gaussian_grid <- bw.ggwr(count ~  HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp$offset), data = mmsp, approach = "AICc", kernel = "gaussian", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
+
 # Fit model 
 ggwr_exponential_grid<-ggwr.basic(count ~ HAB_NALC2 + ROAD + HGT + HGT2 + CTI + CTI2 + CMI + CMIJJA + DD0 + DD5 + EMT + MSP + TD + DD02 + DD52 + CMI2 + CMIJJA2 + CMIJJA:DD0 + CMIJJA:DD5 + EMT:MSP + CMI:DD0 + CMI:DD5 + MSP:TD + MSP:EMT + offset(mmsp$offset), data = mmsp, bw = bw.ggwr.exponential_grid, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
 
-save.image("D:/CHID subunit delineation/subunits.RData")
+save.image("D:/CHID subunit delineation/subunits_version2.RData")
 save("ggwr_exponential_grid",file="D:/CHID subunit delineation//output/ggwr_exponential_grid.Rdata")
 # load("ggwr_exponential","C:/Users/voeroesd/Dropbox/BAM/Critical Habitat/CHID subunit delineation/output/ggwr_exponential.Rdata")
 

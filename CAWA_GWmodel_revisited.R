@@ -20,9 +20,10 @@ library(colorspace)
 library(ggplot2)
 library(gridExtra)
 
+# Prepare dataset ####
+## updated avian dataset including recent atlas data
 
-### updated avian dataset including recent atlas data
-load("D:/CHID subunit delineation/BAM_data_package_July2019.RData")
+load("D:/CHID subunit delineation/BAM_data_package_August2019.RData")
 
 head(PKEYcombo)
 head(PCcombo)
@@ -30,18 +31,18 @@ head(SScombo)
 head(offcombo)
 
 
-#MODIS-based landcover (250-m)
+##MODIS-based landcover (250-m)
 nalc2005<-raster("M:/DataStuff/SpatialData/LCC05_NALCMS2010/Land_Cover_MXD/NA_LandCover_2005/data/NA_LandCover_2005/NA_LandCover_2005_LCC.img")
 SScombo <- cbind(SScombo,"nalc"=extract(nalc2005,SScombo[,c("X","Y")]))
 
-# Road on/off
+## Road on/off
 road<- raster("D:/roadonoff/roadonoff1.tif")
 mr <- c(1, 2500000, 1,  NA, NA, 0)
 rcroad <- matrix(mr, ncol=3, byrow=TRUE)
 rrc <- reclassify(road,rcroad)
 SScombo <- cbind(SScombo,"road"=extract(rrc,SScombo[,c("X","Y")]))  
   
-# Climate data- upload and resample to 250m resolution to match other layers ####
+## Climate data- upload and resample to 250m resolution to match other layers 
 climate2010 <- list.files("D:/ClimateAdaptWest/baseline19812010/",pattern="asc$")
 setwd("D:/ClimateAdaptWest/baseline19812010/")
 clim2010 <- stack(raster(climate2010[1]))
@@ -49,7 +50,7 @@ for (i in 2:length(climate2010)) { clim2010 <- addLayer(clim2010, raster(climate
 proj4string(clim2010)<-LCC
 SScombo <- cbind(SScombo,extract(clim2010,SScombo[,c("X","Y")]))
 
-# Landform and topoedaphic 
+## Landform and topoedaphic 
 lf <- raster("D:/topo/lf_lcc1.tif")
 SScombo <- cbind(SScombo,"landform"=extract(lf,SScombo[,c("X","Y")])) 
 SScombo$landform[which(SScombo$landform>0&SScombo$landform<1)]<-0
@@ -58,7 +59,7 @@ lfclass<-lf_classes$label[match(SScombo$landform,lf_classes$value)]
 SScombo$landform<-lfclass
 
 save.image("D:/CHID subunit delineation/subunits_revisited.RData")
-#load("D:/CHID subunit delineation/subunits_revisited.RData")
+##load("D:/CHID subunit delineation/subunits_revisited.RData")
 
 TPI <- raster("D:/topo/tpiLCC.tif")
 SScombo <- cbind(SScombo,"TPI"=extract(TPI,SScombo[,c("X","Y")]))
@@ -69,7 +70,7 @@ SScombo <- cbind(SScombo,"slope"=extract(slope,SScombo[,c("X","Y")]))
 roughness <- raster("D:/topo/roughLCC.tif")
 SScombo <- cbind(SScombo,"roughness"=extract(roughness,SScombo[,c("X","Y")]))
 
-# Preparing data table
+## Preparing data table
 PC<-inner_join(PCcombo,PKEYcombo,by=c("PKEY"))
 PC<-inner_join(PC,SScombo,by="SS")
 
@@ -94,8 +95,6 @@ for (j in 1:length(speclist)) {
 
 }
 
-d1<-d1[which(d1$Y<10000000),]
-
 ltnalc <- read.csv("C:/Users/voeroesd/Documents/Repos/bamanalytics/lookup/nalcms.csv")
 d1$LCclass<-ltnalc$Label[match(d1$nalc, ltnalc$Value)]
 d1$LCclass<-factor(as.character(d1$LCclass))
@@ -103,7 +102,7 @@ d1<-d1[-which(is.na(d1$LCclass)),]
 
 d1<-d1[complete.cases(d1),]
 
-# Map and sample points
+## Map and sample points
 basemap<-readOGR("D:/CHID subunit delineation/province_state_lcc.shp") ## Basemap for point plots
 BCRs<- readOGR("D:/CHID subunit delineation/bcrfinallcc.shp")
 brandt<-readOGR("D:/CHID subunit delineation/BRANDT_diss_type.shp")
@@ -122,10 +121,10 @@ spplot(allpoints[which(allpoints$ABUND>0),],"ABUND",do.log = F,cuts=4,legendEntr
        sp.layout=list(basemap))
 
 
-# Obtain 10 quadrant-stratified random samples from full dataset: 
+## Obtain 10 quadrant-stratified random samples from full dataset: 
 
 ## A function to randomly sample from quadrants defined by latitude and longitude intervals.
-sample_quad<-function(data,N=20,Xintervals=100,Yintervals=60,seed=123,onlypres=F){
+sample_quad<-function(data,N=10,Xintervals=100,Yintervals=60,seed=123,onlypres=F){
   set.seed(seed)
   if(onlypres==F){
     maxlongitude<-max(data$X)
@@ -221,28 +220,9 @@ samples$sample8<- sample_quad(d1,seed=8)
 samples$sample9<- sample_quad(d1,seed=9)
 samples$sample10<- sample_quad(d1,seed=10)
 
-# # this chunk if adding additional presence points to each sample
-# sample_union<-function(seed=123){
-#   s1<-sample_quad(d1,seed=seed)
-#   s2<-sample_quad(d1,onlypres = T, N=4,seed=seed)
-#   union<-union(s1,s2)
-#   union
-# }
-# 
-# samples$sample1<- sample_union(seed=1)
-# samples$sample2<- sample_union(seed=2)
-# samples$sample3<- sample_union(seed=3)
-# samples$sample4<- sample_union(seed=4)
-# samples$sample5<- sample_union(seed=5)
-# samples$sample6<- sample_union(seed=6)
-# samples$sample7<- sample_union(seed=7)
-# samples$sample8<- sample_union(seed=8)
-# samples$sample9<- sample_union(seed=9)
-# samples$sample10<- sample_union(seed=10)
-
 d2 <-lapply(samples,function(x){d1[x,]})
 
-# Optimize landcover class variable with union of samples (one optimization to rule them all)
+## Optimize landcover class variable with union of samples 
 union_samples<-union(union(union(union(union(union(union(union(union(samples$sample1,samples$sample2),samples$sample3),samples$sample4),samples$sample5),samples$sample6),samples$sample7),samples$sample8),samples$sample9),samples$sample10)
 d1_union<-d1[union_samples,]
 
@@ -269,6 +249,7 @@ d2<-lapply(d2,lc_optim)
 # thin_cawa_mm_east<-lapply(thin_cawa_mm_east,centercovs)
 
 # Create spatial dataframe from data samples
+
 sp_fun<-function(d2){
   sp<- SpatialPointsDataFrame(coords=cbind(d2$X,d2$Y),proj4string = LCC,data=d2)
 }
@@ -281,28 +262,120 @@ save.image("D:/CHID subunit delineation/subunits_revisited.RData")
 rm(list=setdiff(ls(),c("d1","d1_union","d2","LCC","sample_all","plot_sampled","sample_quad","basemap","d2","d2sp"))) # UPDATE OBJECT LIST HERE!
 gc()
 
+
 #save.image("D:/CHID subunit delineation/subunits_revisited.RData")
 load("D:/CHID subunit delineation/subunits_revisited.RData")
 
-## Specify distance matrices and fit GW model to each sample##
+# Geographically weighted models ####
+
+## Specify distance matrices and fit GW model to each sample
 DM <- gw.dist(dp.locat = coordinates(d2sp[[1]]), longlat=TRUE)
 
-bw.ggwr.exponential_grid_east <- bw.ggwr(ABUND ~  (LCclass2-1) + landform + road + offset(d2sp[[1]]$logoffset), data = d2sp[[1]], approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
-write.csv(bw.ggwr.exponential_grid_east, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"bandwidth.csv")))
+bw.ggwr.exponential <- bw.ggwr(ABUND ~  (LCclass2-1) + landform + road + ARU + offset(d2sp[[1]]$logoffset), data = d2sp[[1]], approach = "AICc", kernel = "exponential", adaptive = FALSE, family="poisson", longlat = TRUE, dMat=DM) 
+save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+bw.ggwr.gaussian <- bw.ggwr(ABUND ~  (LCclass2-1) + landform + road + ARU + offset(d2sp[[1]]$logoffset), data = d2sp[[1]], approach = "AICc", kernel = "gaussian", adaptive = FALSE, family="poisson", longlat = TRUE, dMat=DM) 
+save.image("D:/CHID subunit delineation/subunits_revisited.RData")
 
+# ggwr_sample_grid<-function(index,samplename,cell.means=FALSE, kernel="gaussian", bw=NULL,adaptive=FALSE,out.model=FALSE){
+#   
+#   d3<-d2sp[[index]]
+#   
+#   grd <-SpatialGrid(points2grid(d3,tolerance=0.49),proj4string = LCC)
+#   
+#   DM <- gw.dist(dp.locat = coordinates(d3),rp.locat=coordinates(grd), longlat=TRUE)
+#   
+#   if(cell.means==TRUE){ # using cell means model parameterization
+#     # Fit models
+#     if(kernel=="gaussian"){
+#       
+#       if(is.null(bw)==TRUE){
+#         bw.gaussian <- bw.ggwr(ABUND ~  (LCclass2-1) + landform + road +ARU + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = adaptive, family="poisson", longlat = TRUE, dMat=DM) 
+#         save(bw.gaussian, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"bandwidth.csv")))
+#       }
+#       
+#       else{
+#         bw.gaussian<-bw
+#       }
+#       
+#       ggwr_gaussian<-ggwr.basic(ABUND ~  (LCclass2-1) + landform + road +ARU + offset(d3$logoffset), data = d3,regression.points=grd, bw = bw.gaussian, kernel = "gaussian", adaptive = adaptive, longlat=TRUE, family="poisson", dMat=DM)
+#       saveRDS(ggwr_gaussian, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,".R")))
+#       if(out.model==TRUE){
+#       return(ggwr_gaussian)
+#       }
+#     }
+#     
+#     if(kernel=="exponential"){
+#       
+#       if(is.null(bw)==TRUE){
+#         bw.exponential <- bw.ggwr(ABUND ~  (LCclass2-1) + landform + road +ARU + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = adaptive, family="poisson", longlat = TRUE, dMat=DM) 
+#         save(bw.exponential_grid_east, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"bandwidth.csv")))
+#       }
+#       
+#       else{
+#         bw.exponential<-bw
+#       }
+#       
+#       ggwr_exponential<-ggwr.basic(ABUND ~  (LCclass2-1) + landform + road +ARU + offset(d3$logoffset), data = d3,regression.points=grd, bw = bw.exponential, kernel = "exponential", adaptive = adaptive, longlat=TRUE, family="poisson", dMat=DM)
+#       saveRDS(ggwr_exponential, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,".R")))
+#       if(out.model==TRUE){
+#         return(ggwr_exponential)
+#       }
+#     }
+#   }
+#   
+#   if(cell.means==FALSE){ # using treatment contrasts parameterization
+#     
+#     # Fit model
+#     if(kernel=="gaussian"){
+#       
+#       if(is.null(bw)==TRUE){
+#         bw.gaussian <- bw.ggwr(ABUND ~  LCclass2 + landform + road +ARU + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = adaptive, family="poisson", longlat = TRUE, dMat=DM) 
+#         save(bw.gaussian, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"bandwidth.csv")))
+#       }
+#       
+#       else{
+#         bw.gaussian<-bw
+#       }
+#       
+#       ggwr_gaussian<-ggwr.basic(ABUND ~  LCclass2 + landform + road +ARU + offset(d3$logoffset), data = d3,regression.points=grd, bw = bw.gaussian, kernel = "gaussian", adaptive = adaptive, longlat=TRUE, family="poisson", dMat=DM)
+#       saveRDS(ggwr_gaussian, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,".R")))
+#       if(out.model==TRUE){
+#         return(ggwr_gaussian)
+#       }
+#     }
+#     
+#     if(kernel=="exponential"){
+#       
+#       if(is.null(bw)==TRUE){
+#         bw.exponential <- bw.ggwr(ABUND ~  LCclass2 + landform + road +ARU + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = adaptive, family="poisson", longlat = TRUE, dMat=DM) 
+#         save(bw.exponential_grid_east, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"bandwidth.csv")))
+#       }
+#       
+#       else{
+#         bw.exponential<-bw
+#       }
+#       
+#       ggwr_exponential<-ggwr.basic(ABUND ~  LCclass2 + landform + road +ARU + offset(d3$logoffset), data = d3,regression.points=grd, bw = bw.exponential, kernel = "exponential", adaptive = adaptive, longlat=TRUE, family="poisson", dMat=DM)
+#       saveRDS(ggwr_exponential, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,".R")))
+#       if(out.model==TRUE){
+#         return(ggwr_exponential)
+#       }
+#     } 
+#   }
+# } 
 
-ggwr_sample<-function(index,samplename,cell.means=FALSE, kernel="gaussian", bw=NULL){
+ggwr_sample<-function(index,samplename,cell.means=FALSE, kernel="gaussian", bw=NULL,adaptive=FALSE,out.model=FALSE){
   
   d3<-d2sp[[index]]
   
-  DM <- gw.dist(dp.locat = coordinates(d3), longlat=TRUE)
+    DM <- gw.dist(dp.locat = coordinates(d3), longlat=TRUE)
   
   if(cell.means==TRUE){ # using cell means model parameterization
     # Fit models
     if(kernel=="gaussian"){
       
       if(is.null(bw)==TRUE){
-        bw.gaussian <- bw.ggwr(ABUND ~  (LCclass2-1) + landform + road + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
+        bw.gaussian <- bw.ggwr(ABUND ~  (LCclass2-1) + landform + road +ARU + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = adaptive, family="poisson", longlat = TRUE, dMat=DM) 
         save(bw.gaussian, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"bandwidth.csv")))
       }
       
@@ -310,15 +383,17 @@ ggwr_sample<-function(index,samplename,cell.means=FALSE, kernel="gaussian", bw=N
         bw.gaussian<-bw
       }
       
-      ggwr_gaussian<-ggwr.basic(ABUND ~  (LCclass2-1) + landform + road + offset(d3$logoffset), data = d3, bw = bw.gaussian, kernel = "gaussian", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
-      save(ggwr_gaussian, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"ggwr_gaussian.R")))
-      return(ggwr_gaussian)
+      ggwr_gaussian<-ggwr.basic(ABUND ~  (LCclass2-1) + landform + road +ARU + offset(d3$logoffset), data = d3, bw = bw.gaussian, kernel = "gaussian", adaptive = adaptive, longlat=TRUE, family="poisson", dMat=DM)
+      saveRDS(ggwr_gaussian, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,".R")))
+      if(out.model==TRUE){
+        return(ggwr_gaussian)
+      }
     }
     
     if(kernel=="exponential"){
       
       if(is.null(bw)==TRUE){
-        bw.exponential <- bw.ggwr(ABUND ~  (LCclass2-1) + landform + road + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
+        bw.exponential <- bw.ggwr(ABUND ~  (LCclass2-1) + landform + road +ARU + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = adaptive, family="poisson", longlat = TRUE, dMat=DM) 
         save(bw.exponential_grid_east, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"bandwidth.csv")))
       }
       
@@ -326,9 +401,11 @@ ggwr_sample<-function(index,samplename,cell.means=FALSE, kernel="gaussian", bw=N
         bw.exponential<-bw
       }
       
-      ggwr_exponential<-ggwr.basic(ABUND ~  (LCclass2-1) + landform + road + offset(d3$logoffset), data = d3, bw = bw.exponential, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
-      save(ggwr_exponential, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"ggwr_exponential.R")))
-      return(ggwr_exponential)
+      ggwr_exponential<-ggwr.basic(ABUND ~  (LCclass2-1) + landform + road +ARU + offset(d3$logoffset), data = d3, bw = bw.exponential, kernel = "exponential", adaptive = adaptive, longlat=TRUE, family="poisson", dMat=DM)
+      saveRDS(ggwr_exponential, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,".R")))
+      if(out.model==TRUE){
+        return(ggwr_exponential)
+      }
     }
   }
   
@@ -338,7 +415,7 @@ ggwr_sample<-function(index,samplename,cell.means=FALSE, kernel="gaussian", bw=N
     if(kernel=="gaussian"){
       
       if(is.null(bw)==TRUE){
-        bw.gaussian <- bw.ggwr(ABUND ~  LCclass2 + landform + road + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
+        bw.gaussian <- bw.ggwr(ABUND ~  LCclass2 + landform + road +ARU + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = adaptive, family="poisson", longlat = TRUE, dMat=DM) 
         save(bw.gaussian, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"bandwidth.csv")))
       }
       
@@ -346,15 +423,17 @@ ggwr_sample<-function(index,samplename,cell.means=FALSE, kernel="gaussian", bw=N
         bw.gaussian<-bw
       }
       
-      ggwr_gaussian<-ggwr.basic(ABUND ~  LCclass2 + landform + road + offset(d3$logoffset), data = d3, bw = bw.gaussian, kernel = "gaussian", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
-      save(ggwr_gaussian, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"ggwr_gaussian.R")))
-      return(ggwr_gaussian)
+      ggwr_gaussian<-ggwr.basic(ABUND ~  LCclass2 + landform + road +ARU + offset(d3$logoffset), data = d3, bw = bw.gaussian, kernel = "gaussian", adaptive = adaptive, longlat=TRUE, family="poisson", dMat=DM)
+      saveRDS(ggwr_gaussian, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,".R")))
+      if(out.model==TRUE){
+        return(ggwr_gaussian)
+      }
     }
     
     if(kernel=="exponential"){
       
       if(is.null(bw)==TRUE){
-        bw.exponential <- bw.ggwr(ABUND ~  LCclass2 + landform + road + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = TRUE, family="poisson", longlat = TRUE, dMat=DM) 
+        bw.exponential <- bw.ggwr(ABUND ~  LCclass2 + landform + road +ARU + offset(d3$logoffset), data = d3, approach = "AICc", kernel = "exponential", adaptive = adaptive, family="poisson", longlat = TRUE, dMat=DM) 
         save(bw.exponential_grid_east, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"bandwidth.csv")))
       }
       
@@ -362,38 +441,135 @@ ggwr_sample<-function(index,samplename,cell.means=FALSE, kernel="gaussian", bw=N
         bw.exponential<-bw
       }
       
-      ggwr_exponential<-ggwr.basic(ABUND ~  LCclass2 + landform + road + offset(d3$logoffset), data = d3, bw = bw.exponential, kernel = "exponential", adaptive = TRUE, longlat=TRUE, family="poisson", dMat=DM)
-      save(ggwr_exponential, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,"ggwr_exponential.R")))
-      return(ggwr_exponential)
+      ggwr_exponential<-ggwr.basic(ABUND ~  LCclass2 + landform + road +ARU + offset(d3$logoffset), data = d3, bw = bw.exponential, kernel = "exponential", adaptive = adaptive, longlat=TRUE, family="poisson", dMat=DM)
+      saveRDS(ggwr_exponential, file=paste0("D:/CHID subunit delineation/output_revisited/",paste0(samplename,".R")))
+      if(out.model==TRUE){
+        return(ggwr_exponential)
+      }
     } 
   }
 } 
+rm(d2,DM,basemap)
+gc()
 
-ggwr_gauss_1<-ggwr_sample(index=1,samplename="ggwr_gauss_1",kernel="gaussian", cell.means = T)
-ggwr_gauss_3<-ggwr_sample(index=3,samplename="ggwr_gauss_3",kernel="gaussian", cell.means = T)
-ggwr_gauss_5<-ggwr_sample(index=5,samplename="ggwr_gauss_5",kernel="gaussian", cell.means = T)
-ggwr_gauss_7<-ggwr_sample(index=7,samplename="ggwr_gauss_7",kernel="gaussian", cell.means = T)
-ggwr_gauss_9<-ggwr_sample(index=9,samplename="ggwr_gauss_9",kernel="gaussian", cell.means = T)
-ggwr_gauss_2<-ggwr_sample(index=2,samplename="ggwr_gauss_2",kernel="gaussian", cell.means = T)
-ggwr_gauss_4<-ggwr_sample(index=4,samplename="ggwr_gauss_4",kernel="gaussian", cell.means = T)
-ggwr_gauss_6<-ggwr_sample(index=6,samplename="ggwr_gauss_6",kernel="gaussian", cell.means = T)
-ggwr_gauss_8<-ggwr_sample(index=8,samplename="ggwr_gauss_8",kernel="gaussian", cell.means = T)
-ggwr_gauss_10<-ggwr_sample(index=10,samplename="ggwr_gauss_10",kernel="gaussian", cell.means = T)
 
+
+ggwr_sample(index=1,samplename="ggwr_gauss_1",kernel="gaussian", cell.means = T, bw = bw.ggwr.gaussian)
 save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+ggwr_sample(index=3,samplename="ggwr_gauss_3",kernel="gaussian", cell.means = T, bw = bw.ggwr.gaussian)
+save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+gc()
+ggwr_sample(index=5,samplename="ggwr_gauss_5",kernel="gaussian", cell.means = T, bw = bw.ggwr.gaussian)
+#save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+ggwr_sample(index=7,samplename="ggwr_gauss_7",kernel="gaussian", cell.means = T, bw = bw.ggwr.gaussian)
+#save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+gc()
+ggwr_sample(index=9,samplename="ggwr_gauss_9",kernel="gaussian", cell.means = T, bw = bw.ggwr.gaussian)
+ggwr_sample(index=2,samplename="ggwr_gauss_2",kernel="gaussian", cell.means = T, bw = bw.ggwr.gaussian)
+#save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+gc()
+ggwr_sample(index=4,samplename="ggwr_gauss_4",kernel="gaussian", cell.means = T, bw = bw.ggwr.gaussian)
+ggwr_sample(index=6,samplename="ggwr_gauss_6",kernel="gaussian", cell.means = T, bw = bw.ggwr.gaussian)
+#save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+gc()
+ggwr_sample(index=8,samplename="ggwr_gauss_8",kernel="gaussian", cell.means = T, bw = bw.ggwr.gaussian)
+ggwr_sample(index=10,samplename="ggwr_gauss_10",kernel="gaussian", cell.means = T, bw = bw.ggwr.gaussian)
+#save.image("D:/CHID subunit delineation/subunits_revisited.RData")
   
-ggwr_expon_1<-ggwr_sample(index=1,samplename="ggwr_expon_1",kernel="exponential", cell.means = T)
-ggwr_expon_3<-ggwr_sample(index=3,samplename="ggwr_expon_3",kernel="exponential", cell.means = T)
-ggwr_expon_5<-ggwr_sample(index=5,samplename="ggwr_expon_5",kernel="exponential", cell.means = T)
-ggwr_expon_7<-ggwr_sample(index=7,samplename="ggwr_expon_7",kernel="exponential", cell.means = T)
-ggwr_expon_9<-ggwr_sample(index=9,samplename="ggwr_expon_9",kernel="exponential", cell.means = T)
-ggwr_expon_2<-ggwr_sample(index=2,samplename="ggwr_expon_2",kernel="exponential", cell.means = T)
-ggwr_expon_4<-ggwr_sample(index=4,samplename="ggwr_expon_4",kernel="exponential", cell.means = T)
-ggwr_expon_6<-ggwr_sample(index=6,samplename="ggwr_expon_6",kernel="exponential", cell.means = T)
-ggwr_expon_8<-ggwr_sample(index=8,samplename="ggwr_expon_8",kernel="exponential", cell.means = T)
-ggwr_expon_10<-ggwr_sample(index=10,samplename="ggwr_expon_10",kernel="exponential", cell.means = T)
+ggwr_sample(index=1,samplename="ggwr_expon_1",kernel="exponential", cell.means = T, bw = bw.ggwr.exponential)
+ggwr_sample(index=3,samplename="ggwr_expon_3",kernel="exponential", cell.means = T, bw = bw.ggwr.exponential)
+#save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+gc()
+ggwr_sample(index=5,samplename="ggwr_expon_5",kernel="exponential", cell.means = T, bw = bw.ggwr.exponential)
+ggwr_sample(index=7,samplename="ggwr_expon_7",kernel="exponential", cell.means = T, bw = bw.ggwr.exponential)
+#save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+gc()
+ggwr_sample(index=9,samplename="ggwr_expon_9",kernel="exponential", cell.means = T, bw = bw.ggwr.exponential)
+ggwr_sample(index=2,samplename="ggwr_expon_2",kernel="exponential", cell.means = T, bw = bw.ggwr.exponential)
+#save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+gc()
+ggwr_sample(index=4,samplename="ggwr_expon_4",kernel="exponential", cell.means = T, bw = bw.ggwr.exponential)
+ggwr_sample(index=6,samplename="ggwr_expon_6",kernel="exponential", cell.means = T, bw = bw.ggwr.exponential)
+#save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+gc()
+ggwr_sample(index=8,samplename="ggwr_expon_8",kernel="exponential", cell.means = T, bw = bw.ggwr.exponential)
+ggwr_sample(index=10,samplename="ggwr_expon_10",kernel="exponential", cell.means = T, bw = bw.ggwr.exponential)
+#save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+gc()
 
 
-save.image("D:/CHID subunit delineation/subunits_revisited.RData")
+ggwr_expon1<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_expon_1.R")
+ggwr_expon2<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_expon_2.R")
+ggwr_expon3<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_expon_3.R")
+ggwr_expon4<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_expon_4.R")
+ggwr_expon5<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_expon_5.R")
+ggwr_expon6<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_expon_6.R")
+ggwr_expon7<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_expon_7.R")
+ggwr_expon8<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_expon_8.R")
+ggwr_expon9<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_expon_9.R")
+ggwr_expon10<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_expon_10.R")
+
+ggwr_gauss1<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_gauss_1.R")
+ggwr_gauss2<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_gauss_2.R")
+ggwr_gauss3<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_gauss_3.R")
+ggwr_gauss4<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_gauss_4.R")
+ggwr_gauss5<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_gauss_5.R")
+ggwr_gauss6<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_gauss_6.R")
+ggwr_gauss7<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_gauss_7.R")
+ggwr_gauss8<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_gauss_8.R")
+ggwr_gauss9<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_gauss_9.R")
+ggwr_gauss10<-readRDS("D:/CHID subunit delineation/output_revisited/ggwr_gauss_10.R")
 
 
+ggwr_gauss1
+image(ggwr_gauss1$SDF,"LCclass2Agr.Shrub")
+plot(d2sp$sample1,add=T)
+plot(basemap,add=T)
+
+
+
+
+## AVeraging GWmodel predictions among samples
+# create "blank" model raster
+b2011 <- list.files("D:/Beaudoin/2011",pattern="tif$")
+setwd("D:/Beaudoin/2011/")
+bed1<-raster(b2011[1])
+plot(bed1)
+bed1
+bed2<-raster(ext=extent(bed1),crs=proj4string(bed1),resolution=1000)
+rm(bed1)
+gc()
+
+# fill raster stacks with values from GWmodel from each data sample
+
+files<-list.files("D:/CHID subunit delineation/output_revisited",pattern="gauss") # select GW model save.files
+
+files
+
+for(k in 1:length(files)){ 
+  gwmod<- readRDS(paste0("D:/CHID subunit delineation/output_revisited/",files[k]))
+  grd<-stack(rasterize(x=gwmod$SDF[which(gwmod$SDF$y>0),],y=bed2,field=gwmod$SDF@data[which(gwmod$SDF$y>0),1],fun=mean))
+  for (i in 2:17) {grd <- addLayer(grd, rasterize(x=gwmod$SDF,y=bed2,field=gwmod$SDF@data[,i],fun=mean))} # habitat covariates are coluns 1-17 in the SpatialPointsDataFrame
+  names(grd)<-names(gwmod$SDF)[1:17]
+  
+  assign(x=paste0("grid",k),grd)
+  rm(grd,gwmod)
+  gc()
+}
+
+
+
+set<-ls()[grep("grid",ls())]
+z<-mean(stack(lapply(mget(set),function(x){x[[1]]})))
+for(i in 2:nlayers(grid1)){
+  z<-addLayer(z,mean(stack(lapply(mget(set),function(x){x[[i]]}))))
+}
+names(z)<-names(grid1)
+writeRaster(z, filename="D:/CHID subunit delineation/output_revisited/means.grd", format="raster",overwrite=TRUE)
+
+stack1<-stack("D:/CHID subunit delineation/output_revisited/means.grd")
+stack1
+plot(stack1)
+
+
+# Clustering ####

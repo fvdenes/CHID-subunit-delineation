@@ -553,8 +553,8 @@ files
 for(k in 1:length(files)){ 
   gwmod<- readRDS(paste0("D:/CHID subunit delineation/output_revisited/",files[k]))
   grd<-stack(rasterize(x=gwmod$SDF[which(gwmod$SDF$y>0),],y=bed2,field=gwmod$SDF@data[which(gwmod$SDF$y>0),1],fun=mean))
-  for (i in 2:17) {grd <- addLayer(grd, rasterize(x=gwmod$SDF,y=bed2,field=gwmod$SDF@data[,i],fun=mean))} # habitat covariates are coluns 1-17 in the SpatialPointsDataFrame
-  names(grd)<-names(gwmod$SDF)[1:17]
+  for (i in 2:23) {grd <- addLayer(grd, rasterize(x=gwmod$SDF,y=bed2,field=gwmod$SDF@data[,i],fun=mean))} # habitat covariates are columns in the SpatialPointsDataFrame
+  names(grd)<-names(gwmod$SDF)[1:23]
   
   assign(x=paste0("grid",k),grd)
   rm(grd,gwmod)
